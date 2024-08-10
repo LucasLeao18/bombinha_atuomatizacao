@@ -54,12 +54,14 @@ def carregar_dicionario(caminho_arquivo):
 def filtrar_palavras(palavras, letras):
     return [palavra for palavra in palavras if letras in palavra]
 
-# Função para escolher a palavra de acordo com o critério escolhido (longa, curta ou qualquer)
-def escolher_palavra(palavras, palavras_processadas, criterio='longa'):
+# Função para escolher a palavra de acordo com o critério escolhido (longa, curta, qualquer, ou alfabeto)
+def escolher_palavra(palavras, palavras_processadas, criterio='longa', letras_usadas=set()):
     if criterio == 'curta':
         palavras_ordenadas = sorted(palavras, key=len)  # Ordena da mais curta para a mais longa
+    elif criterio == 'alfabeto':
+        palavras_ordenadas = sorted(palavras, key=lambda palavra: len(set(palavra) - letras_usadas), reverse=True)  # Maximiza letras únicas
     else:
-        palavras_ordenadas = sorted(palavras, key=len, reverse=True)  # Ordena da mais longa para a mais curta, ou não aplica filtro de tamanho
+        palavras_ordenadas = sorted(palavras, key=len, reverse=True)  # Ordena da mais longa para a mais curta
     
     for palavra in palavras_ordenadas:
         if palavra not in palavras_processadas:
@@ -79,6 +81,7 @@ def main():
     print("1. Programa com palavras longas")
     print("2. Programa com palavras curtas")
     print("3. Programa com qualquer palavra")
+    print("4. Modo Alfabeto")
     opcao = input("Digite o número da opção desejada: ")
 
     if opcao == '1':
@@ -90,6 +93,11 @@ def main():
     elif opcao == '3':
         criterio = 'qualquer'
         print("Modo: Qualquer Palavra")
+    elif opcao == '4':
+        criterio = 'alfabeto'
+        print("Modo: Alfabeto")
+        letras_usadas = set()
+        alfabeto_completado = 0
     else:
         print("Opção inválida!")
         return
@@ -118,13 +126,22 @@ def main():
             if letras_detectadas != '' and letras_detectadas != letras_anteriores:
                 letras_anteriores = letras_detectadas
                 palavras_filtradas = filtrar_palavras(palavras_dicionario, letras_detectadas)
-                palavra_para_digitar = escolher_palavra(palavras_filtradas, palavras_processadas, criterio)
+                palavra_para_digitar = escolher_palavra(palavras_filtradas, palavras_processadas, criterio, letras_usadas if criterio == 'alfabeto' else set())
 
                 if palavra_para_digitar:
                     palavras_processadas.append(palavra_para_digitar)
                     print(f"A palavra '{palavra_para_digitar}' foi escolhida para digitação.")
                     time.sleep(0.3)  # Espera de 0.3 segundos antes de começar a digitar
                     digitar_palavra(palavra_para_digitar)
+                    
+                    # Atualiza as letras usadas no Modo Alfabeto
+                    if criterio == 'alfabeto':
+                        letras_usadas.update(palavra_para_digitar)
+                        if len(letras_usadas) >= 26:  # Se o alfabeto completo for usado
+                            alfabeto_completado += 1
+                            print(f"Alfabeto completado {alfabeto_completado} vez(es)!")
+                            letras_usadas.clear()  # Reinicia a contagem das letras usadas
+
                 else:
                     print('Não foram encontradas palavras que atendam aos critérios.')
 
