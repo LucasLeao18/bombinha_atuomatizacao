@@ -22,7 +22,7 @@ def escolher_palavra(palavras, palavras_processadas):
 def digitar_palavra(palavra):
     for letra in palavra:
         pyautogui.typewrite(letra)
-        time.sleep(0.001)  # Atraso reduzido para 0.01 segundos para digitação mais rápida
+        time.sleep(0.001)  # Atraso reduzido para 0.001 segundos para digitação mais rápida
     pyautogui.press('enter')
 
 # Função principal
