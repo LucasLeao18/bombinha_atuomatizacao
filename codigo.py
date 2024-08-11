@@ -1,13 +1,10 @@
 import cv2
 import numpy as np
-import pytesseract
-from PIL import ImageGrab, Image
+from PIL import ImageGrab
 import pyautogui
 import time
 import re
-
-# Configuração do Tesseract OCR
-pytesseract.pytesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'  # Caminho padrão para o executável do Tesseract
+import pyperclip  # Para acessar o clipboard
 
 # Conjunto de letras ignoradas no Modo Alfabeto
 letras_ignoradas = {'y', 'k', 'w'}
@@ -28,27 +25,18 @@ def detectar_chatbox(image_path='chatbox.png', threshold=0.8):
             return pt  # Retorna a posição da chatbox encontrada
     return None
 
-# Função para melhorar a imagem e capturar letras usando OCR
-def capturar_letras_ocr(bbox=(649, 551, 742, 627)):
-    screen = np.array(ImageGrab.grab(bbox=bbox))
+# Função para capturar letras usando automação do mouse e clipboard
+def capturar_letras_mouse():
+    # Realiza o duplo clique na posição especificada
+    pyautogui.doubleClick(x=692, y=594)
+    time.sleep(0.5)  # Pequeno delay para garantir que o texto seja selecionado
 
-    # Redimensionar a imagem para melhorar a resolução
-    screen = cv2.resize(screen, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
-    
-    # Convertendo para escala de cinza
-    gray = cv2.cvtColor(screen, cv2.COLOR_BGR2GRAY)
-    
-    # Aplicando um leve blur para suavizar ruídos
-    blur = cv2.GaussianBlur(gray, (5, 5), 0)
-    
-    # Aplicando threshold para melhorar o contraste
-    _, thresh = cv2.threshold(blur, 150, 255, cv2.THRESH_BINARY_INV)
-    
-    # Convertendo de volta para PIL para o Tesseract
-    img_pil = Image.fromarray(thresh)
+    # Copia o texto para o clipboard
+    pyautogui.hotkey('ctrl', 'c')
+    time.sleep(0.5)  # Delay para garantir que o texto seja copiado
 
-    # Executando OCR com parâmetros ajustados
-    letras = pytesseract.image_to_string(img_pil, config='--psm 7')  # Modo de página único texto horizontal
+    # Obtém o texto do clipboard
+    letras = pyperclip.paste()
 
     # Filtrar a string para manter apenas letras (A-Z, a-z)
     letras_somente = re.sub(r'[^A-Za-z]', '', letras)
@@ -137,22 +125,22 @@ def main():
         if chatbox_position:
             print("Chatbox detectada, é a sua vez de jogar!")
 
-            # Clique na posição da chatbox onde a palavra será digitada
-            pyautogui.click(x=838, y=953)
-            time.sleep(0.5)  # Pequeno delay para garantir que a chatbox esteja ativa
-
-            letras_detectadas = capturar_letras_ocr(bbox=(649, 551, 742, 627))
+            # Captura as letras na tela
+            letras_detectadas = capturar_letras_mouse()
             print(f"Letras detectadas: {letras_detectadas}")  # Imprime as letras detectadas
 
-            if letras_detectadas != '' and letras_detectadas != letras_anteriores:
-                letras_anteriores = letras_detectadas
+            if letras_detectadas != '':
                 palavras_filtradas = filtrar_palavras(palavras_dicionario, letras_detectadas)
                 palavra_para_digitar = escolher_palavra(palavras_filtradas, palavras_processadas, criterio, letras_usadas if criterio == 'alfabeto' else set())
 
                 if palavra_para_digitar:
                     palavras_processadas.append(palavra_para_digitar)
                     print(f"A palavra '{palavra_para_digitar}' foi escolhida para digitação.")
+
+                    # Clica na chatbox antes de digitar
+                    pyautogui.click(x=838, y=953)
                     time.sleep(0.3)  # Espera de 0.3 segundos antes de começar a digitar
+
                     digitar_palavra(palavra_para_digitar)
                     
                     # Atualiza as letras usadas no Modo Alfabeto
@@ -162,9 +150,6 @@ def main():
                             alfabeto_completado += 1
                             print(f"Alfabeto completado {alfabeto_completado} vez(es)!")
                             letras_usadas.clear()  # Reinicia a contagem das letras usadas
-
-                else:
-                    print('Não foram encontradas palavras que atendam aos critérios.')
 
         time.sleep(0.5)
 
