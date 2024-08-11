@@ -9,6 +9,9 @@ import re
 # Configuração do Tesseract OCR
 pytesseract.pytesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'  # Caminho padrão para o executável do Tesseract
 
+# Conjunto de letras ignoradas no Modo Alfabeto
+letras_ignoradas = {'y', 'k', 'w'}
+
 # Função para detectar a chatbox na tela
 def detectar_chatbox(image_path='chatbox.png', threshold=0.8):
     screen = np.array(ImageGrab.grab())
@@ -25,13 +28,27 @@ def detectar_chatbox(image_path='chatbox.png', threshold=0.8):
             return pt  # Retorna a posição da chatbox encontrada
     return None
 
-# Função para capturar letras na tela usando OCR sem pré-processamento e ignorar tudo exceto letras
-def capturar_letras_ocr(bbox=(658, 558, 728, 618)):
+# Função para melhorar a imagem e capturar letras usando OCR
+def capturar_letras_ocr(bbox=(649, 551, 742, 627)):
     screen = np.array(ImageGrab.grab(bbox=bbox))
-    screen_pil = Image.fromarray(screen)
 
-    # Executando OCR diretamente na imagem capturada
-    letras = pytesseract.image_to_string(screen_pil, config='--psm 7')  # Modo de página único texto horizontal
+    # Redimensionar a imagem para melhorar a resolução
+    screen = cv2.resize(screen, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
+    
+    # Convertendo para escala de cinza
+    gray = cv2.cvtColor(screen, cv2.COLOR_BGR2GRAY)
+    
+    # Aplicando um leve blur para suavizar ruídos
+    blur = cv2.GaussianBlur(gray, (5, 5), 0)
+    
+    # Aplicando threshold para melhorar o contraste
+    _, thresh = cv2.threshold(blur, 150, 255, cv2.THRESH_BINARY_INV)
+    
+    # Convertendo de volta para PIL para o Tesseract
+    img_pil = Image.fromarray(thresh)
+
+    # Executando OCR com parâmetros ajustados
+    letras = pytesseract.image_to_string(img_pil, config='--psm 7')  # Modo de página único texto horizontal
 
     # Filtrar a string para manter apenas letras (A-Z, a-z)
     letras_somente = re.sub(r'[^A-Za-z]', '', letras)
@@ -59,7 +76,11 @@ def escolher_palavra(palavras, palavras_processadas, criterio='longa', letras_us
     if criterio == 'curta':
         palavras_ordenadas = sorted(palavras, key=len)  # Ordena da mais curta para a mais longa
     elif criterio == 'alfabeto':
-        palavras_ordenadas = sorted(palavras, key=lambda palavra: len(set(palavra) - letras_usadas), reverse=True)  # Maximiza letras únicas
+        palavras_ordenadas = sorted(
+            [palavra for palavra in palavras if not any(letra in letras_ignoradas for letra in palavra)],
+            key=lambda palavra: len(set(palavra) - letras_usadas),
+            reverse=True
+        )  # Maximiza letras únicas sem usar Y, K, W
     else:
         palavras_ordenadas = sorted(palavras, key=len, reverse=True)  # Ordena da mais longa para a mais curta
     
@@ -120,7 +141,7 @@ def main():
             pyautogui.click(x=838, y=953)
             time.sleep(0.5)  # Pequeno delay para garantir que a chatbox esteja ativa
 
-            letras_detectadas = capturar_letras_ocr(bbox=(658, 558, 728, 618))
+            letras_detectadas = capturar_letras_ocr(bbox=(649, 551, 742, 627))
             print(f"Letras detectadas: {letras_detectadas}")  # Imprime as letras detectadas
 
             if letras_detectadas != '' and letras_detectadas != letras_anteriores:
@@ -136,8 +157,8 @@ def main():
                     
                     # Atualiza as letras usadas no Modo Alfabeto
                     if criterio == 'alfabeto':
-                        letras_usadas.update(palavra_para_digitar)
-                        if len(letras_usadas) >= 26:  # Se o alfabeto completo for usado
+                        letras_usadas.update(set(palavra_para_digitar) - letras_ignoradas)
+                        if len(letras_usadas) >= 23:  # Se o alfabeto completo for usado, considerando 23 letras
                             alfabeto_completado += 1
                             print(f"Alfabeto completado {alfabeto_completado} vez(es)!")
                             letras_usadas.clear()  # Reinicia a contagem das letras usadas
