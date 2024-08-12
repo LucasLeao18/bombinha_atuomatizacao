@@ -60,8 +60,8 @@ def processar_palavra(letras):
 
 # Função para carregar o dicionário de palavras
 def carregar_dicionario(caminho_arquivo):
-    with open(caminho_arquivo, 'r') as arquivo:
-        return [palavra.strip().lower() for palavra in arquivo if len(palavra.strip()) > 5]
+    with open(caminho_arquivo, 'r', encoding='utf-8') as arquivo:
+        return [palavra.strip().lower() for palavra in arquivo if len(palavra.strip()) > 0]
 
 # Função para filtrar palavras que contêm uma sequência específica de letras
 def filtrar_palavras(palavras, letras):
@@ -150,7 +150,7 @@ def main():
 def iniciar():
     global executando
     executando = True
-    status_label.config(text="Rodando", fg="green")
+    status_label.config(text="Status: Rodando", fg="green")
     thread = Thread(target=main)
     thread.start()
 
@@ -158,13 +158,14 @@ def iniciar():
 def parar():
     global executando
     executando = False
-    status_label.config(text="Parado", fg="red")
+    status_label.config(text="Status: Parado", fg="red")
     print("Processo parado.")
 
 # Função para selecionar o modo
 def selecionar_modo(modo):
     global modo_selecionado
     modo_selecionado = modo
+    modo_label.config(text=f"Modo Selecionado: {modo.capitalize()}")
     print(f"Modo selecionado: {modo}")
 
 # Função para alternar a inserção de números
@@ -206,8 +207,12 @@ tk.Button(root, text="Iniciar", font=button_font, width=button_width, bg='green'
 tk.Button(root, text="Parar (F8)", font=button_font, width=button_width, bg='red', fg='white', command=parar).pack(pady=10)
 
 # Indicador de status
-status_label = tk.Label(root, text="Parado", font=button_font, fg="red")
+status_label = tk.Label(root, text="Status: Parado", font=button_font, fg="red")
 status_label.pack(pady=5)
+
+# Indicador do modo selecionado
+modo_label = tk.Label(root, text="Modo Selecionado: Nenhum", font=button_font)
+modo_label.pack(pady=5)
 
 # Botão para fechar o programa
 tk.Button(root, text="Fechar", font=('Arial', 12), width=10, command=fechar_programa).pack(pady=5)
@@ -217,5 +222,3 @@ root.bind('<KeyPress>', keypress)
 
 # Execução da interface gráfica
 root.mainloop()
-
-# Fim do programa
