@@ -217,3 +217,5 @@ root.bind('<KeyPress>', keypress)
 
 # Execução da interface gráfica
 root.mainloop()
+
+# Fim do programa
