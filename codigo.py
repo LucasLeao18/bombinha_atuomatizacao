@@ -7,6 +7,7 @@ import re
 import pyperclip  # Para acessar o clipboard
 import tkinter as tk
 from threading import Thread
+import random
 
 # Conjunto de letras ignoradas no Modo Alfabeto
 letras_ignoradas = {'y', 'k', 'w'}
@@ -14,6 +15,7 @@ letras_ignoradas = {'y', 'k', 'w'}
 # Variáveis globais
 modo_selecionado = None
 executando = False
+inserir_numeros = False  # Variável para controle da inserção de números aleatórios
 
 # Função para detectar a chatbox na tela
 def detectar_chatbox(image_path='chatbox.png', threshold=0.8):
@@ -83,10 +85,14 @@ def escolher_palavra(palavras, palavras_processadas, criterio='longa', letras_us
             return palavra
     return None
 
-# Função para digitar a palavra
+# Função para digitar a palavra, possivelmente com números aleatórios
 def digitar_palavra(palavra):
+    global inserir_numeros
     for letra in palavra:
         pyautogui.typewrite(letra)
+        if inserir_numeros and random.choice([True, False]):
+            numero_aleatorio = str(random.randint(0, 9))
+            pyautogui.typewrite(numero_aleatorio)
         time.sleep(0.001)  # Atraso reduzido para 0.001 segundos para digitação mais rápida
     pyautogui.press('enter')
 
@@ -144,6 +150,7 @@ def main():
 def iniciar():
     global executando
     executando = True
+    status_label.config(text="Rodando", fg="green")
     thread = Thread(target=main)
     thread.start()
 
@@ -151,6 +158,7 @@ def iniciar():
 def parar():
     global executando
     executando = False
+    status_label.config(text="Parado", fg="red")
     print("Processo parado.")
 
 # Função para selecionar o modo
@@ -159,23 +167,53 @@ def selecionar_modo(modo):
     modo_selecionado = modo
     print(f"Modo selecionado: {modo}")
 
+# Função para alternar a inserção de números
+def alternar_inserir_numeros():
+    global inserir_numeros
+    inserir_numeros = not inserir_numeros
+    estado = "ligado" if inserir_numeros else "desligado"
+    print(f"Inserir números aleatórios: {estado}")
+
+# Função para fechar o programa
+def fechar_programa():
+    root.destroy()
+
+# Função para parar o programa ao pressionar F8
+def keypress(event):
+    if event.keysym == 'F8':
+        parar()
+
 # Interface gráfica com tkinter
 root = tk.Tk()
 root.title("Automação de Palavras")
-root.geometry("500x440")  # Aumentando o tamanho da janela
+root.geometry("600x650")  # Definindo o tamanho da janela
 
 # Botões de seleção de modos
-button_font = ('Arial', 12)  # Definindo uma fonte maior para os botões
-button_width = 20  # Largura dos botões
+button_font = ('Arial', 14)  # Definindo uma fonte maior para os botões
+button_width = 25  # Largura dos botões
 
-tk.Button(root, text="Palavras Longas", font=button_font, width=button_width, command=lambda: selecionar_modo('longa')).pack(pady=10)
-tk.Button(root, text="Palavras Curtas", font=button_font, width=button_width, command=lambda: selecionar_modo('curta')).pack(pady=10)
-tk.Button(root, text="Qualquer Palavra", font=button_font, width=button_width, command=lambda: selecionar_modo('qualquer')).pack(pady=10)
-tk.Button(root, text="Modo Alfabeto", font=button_font, width=button_width, command=lambda: selecionar_modo('alfabeto')).pack(pady=10)
+tk.Button(root, text="Palavras Longas", font=button_font, width=button_width, command=lambda: selecionar_modo('longa')).pack(pady=5)
+tk.Button(root, text="Palavras Curtas", font=button_font, width=button_width, command=lambda: selecionar_modo('curta')).pack(pady=5)
+tk.Button(root, text="Qualquer Palavra", font=button_font, width=button_width, command=lambda: selecionar_modo('qualquer')).pack(pady=5)
+tk.Button(root, text="Modo Alfabeto", font=button_font, width=button_width, command=lambda: selecionar_modo('alfabeto')).pack(pady=5)
+
+# Checkbox para inserir números aleatórios
+checkbox_var = tk.IntVar()
+tk.Checkbutton(root, text="Inserir números aleatórios", font=button_font, variable=checkbox_var, command=alternar_inserir_numeros).pack(pady=5)
 
 # Botões de controle
-tk.Button(root, text="Iniciar", font=button_font, width=button_width, command=iniciar).pack(pady=20)
-tk.Button(root, text="Parar", font=button_font, width=button_width, command=parar).pack(pady=10)
+tk.Button(root, text="Iniciar", font=button_font, width=button_width, bg='green', fg='white', command=iniciar).pack(pady=10)
+tk.Button(root, text="Parar (F8)", font=button_font, width=button_width, bg='red', fg='white', command=parar).pack(pady=10)
+
+# Indicador de status
+status_label = tk.Label(root, text="Parado", font=button_font, fg="red")
+status_label.pack(pady=5)
+
+# Botão para fechar o programa
+tk.Button(root, text="Fechar", font=('Arial', 12), width=10, command=fechar_programa).pack(pady=5)
+
+# Associa a tecla F8 para parar o programa
+root.bind('<KeyPress>', keypress)
 
 # Execução da interface gráfica
 root.mainloop()
