@@ -162,16 +162,20 @@ def selecionar_modo(modo):
 # Interface gráfica com tkinter
 root = tk.Tk()
 root.title("Automação de Palavras")
+root.geometry("500x440")  # Aumentando o tamanho da janela
 
 # Botões de seleção de modos
-tk.Button(root, text="Palavras Longas", command=lambda: selecionar_modo('longa')).pack(pady=5)
-tk.Button(root, text="Palavras Curtas", command=lambda: selecionar_modo('curta')).pack(pady=5)
-tk.Button(root, text="Qualquer Palavra", command=lambda: selecionar_modo('qualquer')).pack(pady=5)
-tk.Button(root, text="Modo Alfabeto", command=lambda: selecionar_modo('alfabeto')).pack(pady=5)
+button_font = ('Arial', 12)  # Definindo uma fonte maior para os botões
+button_width = 20  # Largura dos botões
+
+tk.Button(root, text="Palavras Longas", font=button_font, width=button_width, command=lambda: selecionar_modo('longa')).pack(pady=10)
+tk.Button(root, text="Palavras Curtas", font=button_font, width=button_width, command=lambda: selecionar_modo('curta')).pack(pady=10)
+tk.Button(root, text="Qualquer Palavra", font=button_font, width=button_width, command=lambda: selecionar_modo('qualquer')).pack(pady=10)
+tk.Button(root, text="Modo Alfabeto", font=button_font, width=button_width, command=lambda: selecionar_modo('alfabeto')).pack(pady=10)
 
 # Botões de controle
-tk.Button(root, text="Iniciar", command=iniciar).pack(pady=20)
-tk.Button(root, text="Parar", command=parar).pack(pady=5)
+tk.Button(root, text="Iniciar", font=button_font, width=button_width, command=iniciar).pack(pady=20)
+tk.Button(root, text="Parar", font=button_font, width=button_width, command=parar).pack(pady=10)
 
 # Execução da interface gráfica
 root.mainloop()
