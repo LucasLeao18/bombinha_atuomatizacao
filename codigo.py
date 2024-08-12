@@ -5,9 +5,15 @@ import pyautogui
 import time
 import re
 import pyperclip  # Para acessar o clipboard
+import tkinter as tk
+from threading import Thread
 
 # Conjunto de letras ignoradas no Modo Alfabeto
 letras_ignoradas = {'y', 'k', 'w'}
+
+# Variáveis globais
+modo_selecionado = None
+executando = False
 
 # Função para detectar a chatbox na tela
 def detectar_chatbox(image_path='chatbox.png', threshold=0.8):
@@ -86,41 +92,22 @@ def digitar_palavra(palavra):
 
 # Função principal que une todos os componentes
 def main():
-    print("Selecione uma opção:")
-    print("1. Programa com palavras longas")
-    print("2. Programa com palavras curtas")
-    print("3. Programa com qualquer palavra")
-    print("4. Modo Alfabeto")
-    opcao = input("Digite o número da opção desejada: ")
-
-    if opcao == '1':
-        criterio = 'longa'
-        print("Modo: Palavras Longas")
-    elif opcao == '2':
-        criterio = 'curta'
-        print("Modo: Palavras Curtas")
-    elif opcao == '3':
-        criterio = 'qualquer'
-        print("Modo: Qualquer Palavra")
-    elif opcao == '4':
-        criterio = 'alfabeto'
-        print("Modo: Alfabeto")
-        letras_usadas = set()
-        alfabeto_completado = 0
-    else:
-        print("Opção inválida!")
+    global modo_selecionado, executando
+    
+    if not modo_selecionado:
+        print("Nenhum modo selecionado!")
         return
 
-    print("Iniciando em 2 segundos...")
-    time.sleep(2)
-
+    print(f"Iniciando no modo: {modo_selecionado}")
     caminho_dicionario = 'acento.txt'
     palavras_dicionario = carregar_dicionario(caminho_dicionario)
     palavras_processadas = []
     letras_anteriores = ''
     letras_detectadas = ''  # Variável para armazenar as letras detectadas
+    letras_usadas = set() if modo_selecionado == 'alfabeto' else None
+    alfabeto_completado = 0
 
-    while True:
+    while executando:
         chatbox_position = detectar_chatbox('chatbox.png')  # Usando o nome da imagem 'chatbox.png'
         if chatbox_position:
             print("Chatbox detectada, é a sua vez de jogar!")
@@ -131,7 +118,7 @@ def main():
 
             if letras_detectadas != '':
                 palavras_filtradas = filtrar_palavras(palavras_dicionario, letras_detectadas)
-                palavra_para_digitar = escolher_palavra(palavras_filtradas, palavras_processadas, criterio, letras_usadas if criterio == 'alfabeto' else set())
+                palavra_para_digitar = escolher_palavra(palavras_filtradas, palavras_processadas, modo_selecionado, letras_usadas)
 
                 if palavra_para_digitar:
                     palavras_processadas.append(palavra_para_digitar)
@@ -144,7 +131,7 @@ def main():
                     digitar_palavra(palavra_para_digitar)
                     
                     # Atualiza as letras usadas no Modo Alfabeto
-                    if criterio == 'alfabeto':
+                    if modo_selecionado == 'alfabeto':
                         letras_usadas.update(set(palavra_para_digitar) - letras_ignoradas)
                         if len(letras_usadas) >= 23:  # Se o alfabeto completo for usado, considerando 23 letras
                             alfabeto_completado += 1
@@ -153,5 +140,38 @@ def main():
 
         time.sleep(0.5)
 
-if __name__ == '__main__':
-    main()
+# Função para iniciar o processo
+def iniciar():
+    global executando
+    executando = True
+    thread = Thread(target=main)
+    thread.start()
+
+# Função para parar o processo
+def parar():
+    global executando
+    executando = False
+    print("Processo parado.")
+
+# Função para selecionar o modo
+def selecionar_modo(modo):
+    global modo_selecionado
+    modo_selecionado = modo
+    print(f"Modo selecionado: {modo}")
+
+# Interface gráfica com tkinter
+root = tk.Tk()
+root.title("Automação de Palavras")
+
+# Botões de seleção de modos
+tk.Button(root, text="Palavras Longas", command=lambda: selecionar_modo('longa')).pack(pady=5)
+tk.Button(root, text="Palavras Curtas", command=lambda: selecionar_modo('curta')).pack(pady=5)
+tk.Button(root, text="Qualquer Palavra", command=lambda: selecionar_modo('qualquer')).pack(pady=5)
+tk.Button(root, text="Modo Alfabeto", command=lambda: selecionar_modo('alfabeto')).pack(pady=5)
+
+# Botões de controle
+tk.Button(root, text="Iniciar", command=iniciar).pack(pady=20)
+tk.Button(root, text="Parar", command=parar).pack(pady=5)
+
+# Execução da interface gráfica
+root.mainloop()
