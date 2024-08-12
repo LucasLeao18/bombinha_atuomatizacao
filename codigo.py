@@ -8,6 +8,7 @@ import pyperclip  # Para acessar o clipboard
 import tkinter as tk
 from threading import Thread
 import random
+import keyboard  # Biblioteca para capturar eventos de teclado globalmente
 
 # Conjunto de letras ignoradas no Modo Alfabeto
 letras_ignoradas = {'y', 'k', 'w'}
@@ -37,11 +38,11 @@ def detectar_chatbox(image_path='chatbox.png', threshold=0.8):
 def capturar_letras_mouse():
     # Realiza o duplo clique na posição especificada
     pyautogui.doubleClick(x=692, y=594)
-    time.sleep(0.5)  # Pequeno delay para garantir que o texto seja selecionado
+    time.sleep(0.3)  # Reduzindo o delay para garantir que o texto seja selecionado
 
     # Copia o texto para o clipboard
     pyautogui.hotkey('ctrl', 'c')
-    time.sleep(0.5)  # Delay para garantir que o texto seja copiado
+    time.sleep(0.3)  # Reduzindo o delay para garantir que o texto seja copiado
 
     # Obtém o texto do clipboard
     letras = pyperclip.paste()
@@ -132,7 +133,7 @@ def main():
 
                     # Clica na chatbox antes de digitar
                     pyautogui.click(x=838, y=953)
-                    time.sleep(0.3)  # Espera de 0.3 segundos antes de começar a digitar
+                    time.sleep(0.3)  # Reduzindo o tempo de espera antes de digitar
 
                     digitar_palavra(palavra_para_digitar)
                     
@@ -144,7 +145,7 @@ def main():
                             print(f"Alfabeto completado {alfabeto_completado} vez(es)!")
                             letras_usadas.clear()  # Reinicia a contagem das letras usadas
 
-        time.sleep(0.5)
+        time.sleep(0.2)  # Reduzindo o tempo de espera entre as execuções do loop
 
 # Função para iniciar o processo
 def iniciar():
@@ -179,10 +180,13 @@ def alternar_inserir_numeros():
 def fechar_programa():
     root.destroy()
 
-# Função para parar o programa ao pressionar F8
-def keypress(event):
-    if event.keysym == 'F8':
-        parar()
+# Função para parar o programa ao pressionar F8 (mesmo em segundo plano)
+def monitorar_tecla_f8():
+    while True:
+        if keyboard.is_pressed('F8'):
+            parar()
+            break
+        time.sleep(0.1)
 
 # Interface gráfica com tkinter
 root = tk.Tk()
@@ -217,8 +221,8 @@ modo_label.pack(pady=5)
 # Botão para fechar o programa
 tk.Button(root, text="Fechar", font=('Arial', 12), width=10, command=fechar_programa).pack(pady=5)
 
-# Associa a tecla F8 para parar o programa
-root.bind('<KeyPress>', keypress)
+# Inicia a thread para monitorar a tecla F8 em segundo plano
+Thread(target=monitorar_tecla_f8, daemon=True).start()
 
 # Execução da interface gráfica
 root.mainloop()
