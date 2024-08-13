@@ -6,6 +6,7 @@ import time
 import re
 import pyperclip  # Para acessar o clipboard
 import tkinter as tk
+from tkinter import ttk, scrolledtext
 from threading import Thread
 import random
 import keyboard  # Biblioteca para capturar eventos de teclado globalmente
@@ -102,10 +103,10 @@ def main():
     global modo_selecionado, executando
     
     if not modo_selecionado:
-        print("Nenhum modo selecionado!")
+        append_terminal("Nenhum modo selecionado!")
         return
 
-    print(f"Iniciando no modo: {modo_selecionado}")
+    append_terminal(f"Iniciando no modo: {modo_selecionado}")
     caminho_dicionario = 'acento.txt'
     palavras_dicionario = carregar_dicionario(caminho_dicionario)
     palavras_processadas = []
@@ -117,11 +118,11 @@ def main():
     while executando:
         chatbox_position = detectar_chatbox('chatbox.png')  # Usando o nome da imagem 'chatbox.png'
         if chatbox_position:
-            print("Chatbox detectada, é a sua vez de jogar!")
+            append_terminal("Chatbox detectada, é a sua vez de jogar!")
 
             # Captura as letras na tela
             letras_detectadas = capturar_letras_mouse()
-            print(f"Letras detectadas: {letras_detectadas}")  # Imprime as letras detectadas
+            append_terminal(f"Letras detectadas: {letras_detectadas}")  # Imprime as letras detectadas
 
             if letras_detectadas != '':
                 palavras_filtradas = filtrar_palavras(palavras_dicionario, letras_detectadas)
@@ -129,7 +130,7 @@ def main():
 
                 if palavra_para_digitar:
                     palavras_processadas.append(palavra_para_digitar)
-                    print(f"A palavra '{palavra_para_digitar}' foi escolhida para digitação.")
+                    append_terminal(f"A palavra '{palavra_para_digitar}' foi escolhida para digitação.")
 
                     # Clica na chatbox antes de digitar
                     pyautogui.click(x=838, y=953)
@@ -142,7 +143,7 @@ def main():
                         letras_usadas.update(set(palavra_para_digitar) - letras_ignoradas)
                         if len(letras_usadas) >= 23:  # Se o alfabeto completo for usado, considerando 23 letras
                             alfabeto_completado += 1
-                            print(f"Alfabeto completado {alfabeto_completado} vez(es)!")
+                            append_terminal(f"Alfabeto completado {alfabeto_completado} vez(es)!")
                             letras_usadas.clear()  # Reinicia a contagem das letras usadas
 
         time.sleep(0.2)  # Reduzindo o tempo de espera entre as execuções do loop
@@ -160,21 +161,21 @@ def parar():
     global executando
     executando = False
     status_label.config(text="Status: Parado", fg="red")
-    print("Processo parado.")
+    append_terminal("Processo parado.")
 
 # Função para selecionar o modo
 def selecionar_modo(modo):
     global modo_selecionado
     modo_selecionado = modo
     modo_label.config(text=f"Modo Selecionado: {modo.capitalize()}")
-    print(f"Modo selecionado: {modo}")
+    append_terminal(f"Modo selecionado: {modo}")
 
 # Função para alternar a inserção de números
 def alternar_inserir_numeros():
     global inserir_numeros
     inserir_numeros = not inserir_numeros
     estado = "ligado" if inserir_numeros else "desligado"
-    print(f"Inserir números aleatórios: {estado}")
+    append_terminal(f"Inserir números aleatórios: {estado}")
 
 # Função para fechar o programa
 def fechar_programa():
@@ -188,38 +189,63 @@ def monitorar_tecla_f8():
             break
         time.sleep(0.1)
 
+# Função para adicionar texto ao terminal na interface
+def append_terminal(text):
+    terminal_textbox.config(state=tk.NORMAL)
+    terminal_textbox.insert(tk.END, text + "\n")
+    terminal_textbox.config(state=tk.DISABLED)
+    terminal_textbox.yview(tk.END)
+
 # Interface gráfica com tkinter
 root = tk.Tk()
 root.title("Automação de Palavras")
 root.geometry("600x650")  # Definindo o tamanho da janela
+root.attributes('-topmost', True)  # Mantém a janela sempre no topo
 
+# Adicionando abas
+tab_control = ttk.Notebook(root)
+tab_control.pack(expand=1, fill='both')
+
+# Aba principal
+tab1 = ttk.Frame(tab_control)
+tab_control.add(tab1, text='Principal')
+
+# Aba do terminal
+tab2 = ttk.Frame(tab_control)
+tab_control.add(tab2, text='Terminal')
+
+# Configuração da aba principal
 # Botões de seleção de modos
 button_font = ('Arial', 14)  # Definindo uma fonte maior para os botões
 button_width = 25  # Largura dos botões
 
-tk.Button(root, text="Palavras Longas", font=button_font, width=button_width, command=lambda: selecionar_modo('longa')).pack(pady=5)
-tk.Button(root, text="Palavras Curtas", font=button_font, width=button_width, command=lambda: selecionar_modo('curta')).pack(pady=5)
-tk.Button(root, text="Qualquer Palavra", font=button_font, width=button_width, command=lambda: selecionar_modo('qualquer')).pack(pady=5)
-tk.Button(root, text="Modo Alfabeto", font=button_font, width=button_width, command=lambda: selecionar_modo('alfabeto')).pack(pady=5)
+tk.Button(tab1, text="Palavras Longas", font=button_font, width=button_width, command=lambda: selecionar_modo('longa')).pack(pady=5)
+tk.Button(tab1, text="Palavras Curtas", font=button_font, width=button_width, command=lambda: selecionar_modo('curta')).pack(pady=5)
+tk.Button(tab1, text="Qualquer Palavra", font=button_font, width=button_width, command=lambda: selecionar_modo('qualquer')).pack(pady=5)
+tk.Button(tab1, text="Modo Alfabeto", font=button_font, width=button_width, command=lambda: selecionar_modo('alfabeto')).pack(pady=5)
 
 # Checkbox para inserir números aleatórios
 checkbox_var = tk.IntVar()
-tk.Checkbutton(root, text="Inserir números aleatórios", font=button_font, variable=checkbox_var, command=alternar_inserir_numeros).pack(pady=5)
+tk.Checkbutton(tab1, text="Inserir números aleatórios", font=button_font, variable=checkbox_var, command=alternar_inserir_numeros).pack(pady=5)
 
 # Botões de controle
-tk.Button(root, text="Iniciar", font=button_font, width=button_width, bg='green', fg='white', command=iniciar).pack(pady=10)
-tk.Button(root, text="Parar (F8)", font=button_font, width=button_width, bg='red', fg='white', command=parar).pack(pady=10)
+tk.Button(tab1, text="Iniciar", font=button_font, width=button_width, bg='green', fg='white', command=iniciar).pack(pady=10)
+tk.Button(tab1, text="Parar (F8)", font=button_font, width=button_width, bg='red', fg='white', command=parar).pack(pady=10)
 
 # Indicador de status
-status_label = tk.Label(root, text="Status: Parado", font=button_font, fg="red")
+status_label = tk.Label(tab1, text="Status: Parado", font=button_font, fg="red")
 status_label.pack(pady=5)
 
 # Indicador do modo selecionado
-modo_label = tk.Label(root, text="Modo Selecionado: Nenhum", font=button_font)
+modo_label = tk.Label(tab1, text="Modo Selecionado: Nenhum", font=button_font)
 modo_label.pack(pady=5)
 
 # Botão para fechar o programa
-tk.Button(root, text="Fechar", font=('Arial', 12), width=10, command=fechar_programa).pack(pady=5)
+tk.Button(tab1, text="Fechar", font=('Arial', 12), width=10, command=fechar_programa).pack(pady=5)
+
+# Configuração da aba do terminal
+terminal_textbox = scrolledtext.ScrolledText(tab2, state=tk.DISABLED, wrap=tk.WORD)
+terminal_textbox.pack(expand=1, fill='both')
 
 # Inicia a thread para monitorar a tecla F8 em segundo plano
 Thread(target=monitorar_tecla_f8, daemon=True).start()
