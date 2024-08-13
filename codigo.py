@@ -10,6 +10,8 @@ from tkinter import ttk, scrolledtext
 from threading import Thread
 import random
 import keyboard  # Biblioteca para capturar eventos de teclado globalmente
+from pynput import mouse  # Para capturar cliques do mouse
+import json  # Para salvar e carregar as posições do mouse
 
 # Conjunto de letras ignoradas no Modo Alfabeto
 letras_ignoradas = {'y', 'k', 'w'}
@@ -18,6 +20,30 @@ letras_ignoradas = {'y', 'k', 'w'}
 modo_selecionado = None
 executando = False
 inserir_numeros = False  # Variável para controle da inserção de números aleatórios
+posicao_mouse_letras = (692, 594)  # Posição inicial do mouse para copiar as letras
+posicao_mouse_chatbox = (838, 953)  # Posição inicial do clique na chatbox
+
+# Função para carregar as posições do mouse de um arquivo
+def carregar_posicoes():
+    global posicao_mouse_letras, posicao_mouse_chatbox
+    try:
+        with open('posicoes.json', 'r') as file:
+            posicoes = json.load(file)
+            posicao_mouse_letras = tuple(posicoes['letras'])
+            posicao_mouse_chatbox = tuple(posicoes['chatbox'])
+            append_terminal("Posições carregadas com sucesso.")
+    except (FileNotFoundError, KeyError):
+        append_terminal("Nenhuma posição salva encontrada, usando valores padrão.")
+
+# Função para salvar as posições do mouse em um arquivo
+def salvar_posicoes():
+    posicoes = {
+        'letras': posicao_mouse_letras,
+        'chatbox': posicao_mouse_chatbox
+    }
+    with open('posicoes.json', 'w') as file:
+        json.dump(posicoes, file)
+    append_terminal("Posições salvas com sucesso.")
 
 # Função para detectar a chatbox na tela
 def detectar_chatbox(image_path='chatbox.png', threshold=0.8):
@@ -38,7 +64,7 @@ def detectar_chatbox(image_path='chatbox.png', threshold=0.8):
 # Função para capturar letras usando automação do mouse e clipboard
 def capturar_letras_mouse():
     # Realiza o duplo clique na posição especificada
-    pyautogui.doubleClick(x=692, y=594)
+    pyautogui.doubleClick(x=posicao_mouse_letras[0], y=posicao_mouse_letras[1])
     time.sleep(0.3)  # Reduzindo o delay para garantir que o texto seja selecionado
 
     # Copia o texto para o clipboard
@@ -133,7 +159,7 @@ def main():
                     append_terminal(f"A palavra '{palavra_para_digitar}' foi escolhida para digitação.")
 
                     # Clica na chatbox antes de digitar
-                    pyautogui.click(x=838, y=953)
+                    pyautogui.click(x=posicao_mouse_chatbox[0], y=posicao_mouse_chatbox[1])
                     time.sleep(0.3)  # Reduzindo o tempo de espera antes de digitar
 
                     digitar_palavra(palavra_para_digitar)
@@ -196,6 +222,36 @@ def append_terminal(text):
     terminal_textbox.config(state=tk.DISABLED)
     terminal_textbox.yview(tk.END)
 
+# Função para capturar a posição do mouse
+def capturar_posicao_mouse(callback):
+    def on_click(x, y, button, pressed):
+        if pressed:
+            callback(x, y)
+            return False  # Para o listener após o primeiro clique
+
+    listener_thread = Thread(target=lambda: mouse.Listener(on_click=on_click).start())
+    listener_thread.start()
+
+# Função para atualizar a posição do mouse para copiar as letras
+def atualizar_posicao_letras():
+    append_terminal("Clique para definir a nova posição para copiar as letras...")
+    capturar_posicao_mouse(atualizar_posicao_letras_callback)
+
+def atualizar_posicao_letras_callback(x, y):
+    global posicao_mouse_letras
+    posicao_mouse_letras = (x, y)
+    append_terminal(f"Posição do mouse para copiar letras atualizada para: {posicao_mouse_letras}")
+
+# Função para atualizar a posição do mouse para clicar na chatbox
+def atualizar_posicao_chatbox():
+    append_terminal("Clique para definir a nova posição da chatbox...")
+    capturar_posicao_mouse(atualizar_posicao_chatbox_callback)
+
+def atualizar_posicao_chatbox_callback(x, y):
+    global posicao_mouse_chatbox
+    posicao_mouse_chatbox = (x, y)
+    append_terminal(f"Posição do mouse para clicar na chatbox atualizada para: {posicao_mouse_chatbox}")
+
 # Interface gráfica com tkinter
 root = tk.Tk()
 root.title("Automação de Palavras")
@@ -213,6 +269,10 @@ tab_control.add(tab1, text='Principal')
 # Aba do terminal
 tab2 = ttk.Frame(tab_control)
 tab_control.add(tab2, text='Terminal')
+
+# Aba de setup
+tab3 = ttk.Frame(tab_control)
+tab_control.add(tab3, text='Setup')
 
 # Configuração da aba principal
 # Botões de seleção de modos
@@ -247,8 +307,34 @@ tk.Button(tab1, text="Fechar", font=('Arial', 12), width=10, command=fechar_prog
 terminal_textbox = scrolledtext.ScrolledText(tab2, state=tk.DISABLED, wrap=tk.WORD)
 terminal_textbox.pack(expand=1, fill='both')
 
+# Configuração da aba de setup
+tk.Button(tab3, text="Atualizar Posição para Copiar Letras", font=button_font, command=atualizar_posicao_letras).pack(pady=10)
+tk.Button(tab3, text="Atualizar Posição da Chatbox", font=button_font, command=atualizar_posicao_chatbox).pack(pady=10)
+tk.Button(tab3, text="Salvar Posições", font=button_font, command=salvar_posicoes).pack(pady=10)
+
+# Função para criar o texto de desenvolvedor com cores RGB rainbow
+def aplicar_texto_desenvolvedor(parent):
+    label_texto = tk.Label(parent, text="Desenvolvedor: @lucasleao18", font=('Arial', 10))
+    label_texto.place(relx=1.0, rely=1.0, anchor='se')
+
+    def mudar_cor():
+        r = lambda: random.randint(0, 255)
+        cor = f'#{r():02x}{r():02x}{r():02x}'
+        label_texto.config(fg=cor)
+        parent.after(500, mudar_cor)
+
+    mudar_cor()
+
+# Aplicando o texto de desenvolvedor em todas as abas
+aplicar_texto_desenvolvedor(tab1)
+aplicar_texto_desenvolvedor(tab2)
+aplicar_texto_desenvolvedor(tab3)
+
 # Inicia a thread para monitorar a tecla F8 em segundo plano
 Thread(target=monitorar_tecla_f8, daemon=True).start()
+
+# Carrega as posições do mouse
+carregar_posicoes()
 
 # Execução da interface gráfica
 root.mainloop()
