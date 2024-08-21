@@ -31,7 +31,7 @@ Este projeto é uma aplicação em Python que automatiza a digitação de palavr
 1. Clone este repositório para sua máquina local.
 2. Instale as dependências necessárias utilizando pip:
     ```bash
-    pip install opencv-python-headless numpy pillow pyautogui pyperclip
+    pip install opencv-python-headless numpy pillow pyautogui pyperclip keyboard pynput
     ```
 3. Execute o script Python:
     ```bash
