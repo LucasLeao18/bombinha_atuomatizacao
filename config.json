@@ -1,0 +1,43 @@
+{
+  "delay_ciclo_ms": 200,
+  "delay_pos_copiar_ms": 300,
+  "delay_antes_digitar_ms": 200,
+  "caminho_dicionario": "acento.txt",
+  "template_chatbox": "chatbox.png",
+  "template_threshold": 0.8,
+  "turn_bar_threshold": 0.85,
+  "modo": "curta",
+  "penaliza_repetidas": true,
+  "penalizacao_repetida": 0.85,
+  "cooldown_repeticao": 5,
+  "mostrar_top_n": 5,
+  "modo_teste": false,
+  "salvar_log": false,
+  "limite_tempo_round_s": 2.0,
+  "humanizar": {
+    "chance_erro": 0.014534883720930232,
+    "variacao_delay": 0.009883720930232558,
+    "inserir_numeros": false,
+    "numeros_rodadas": 10,
+    "hesitacao_enter_min": 0.06,
+    "hesitacao_enter_max": 0.18,
+    "pausa_cada": 4,
+    "pausa_min": 0.015,
+    "pausa_max": 0.06,
+    "perfil": "aleatoria",
+    "delay_entre_letras_ms": 5,
+    "chance_falha_proposital": 0.040697674418604654,
+    "chance_erro_enter": 0.041860465116279076,
+    "chance_frase_engracada": 0.03488372093023256,
+    "chance_ensaio_palavra": 0.046511627906976744,
+    "pensar_3letras": true,
+    "pensar_3letras_pausa_ms": 500,
+    "frases_customizadas": [
+      "me mamem",
+      "sou pika",
+      "sexooo",
+      "drogas",
+      "pai e goat"
+    ]
+  }
+}

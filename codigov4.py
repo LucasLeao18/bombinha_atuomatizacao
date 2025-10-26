@@ -1,13 +1,3 @@
-# -*- coding: utf-8 -*-
-"""
-JKLM.fun – Bot de Palavras (PT-BR) – v3.4
-Autor UI: @lucasleao18
-Requisitos: opencv-python, numpy, pillow, pyautogui, pyperclip, keyboard, pynput
-Python 3.8+
-
-AVISO: Automação pode violar ToS do jogo. Use por sua conta e risco.
-"""
-
 import os
 import re
 import cv2
@@ -54,6 +44,8 @@ FRASES_ENGRACADAS_DEFAULT = [
     "ops, escrevi errado",
     "é isso? acho que sim",
 ]
+
+FRASE_QUANDO_NAO_TEM = "fudeu mlk sei nao mamei"  # pedido do usuário
 
 class Modo(Enum):
     LONGA = 'longa'
@@ -110,7 +102,7 @@ class HumanizarConfig:
     chance_frase_engracada: float = 0.20
     # Chance de "ensaio" da palavra (digitar algo e apagar) antes da final
     chance_ensaio_palavra: float = 0.25
-    # Pensar após 3 primeiras letras (se palavra começar com as 3 do frag)
+    # Pensar após 3 primeiras letras (se palavra começar com as 3 do desafio)
     pensar_3letras: bool = True
     pensar_3letras_pausa_ms: int = 500
     # Frases personalizadas
@@ -129,6 +121,7 @@ class AppConfig:
     # Chatbox (template para detecção opcional)
     template_chatbox: str = "chatbox.png"
     template_threshold: float = 0.80
+    turn_bar_threshold: float = 0.85
 
     # Modo inicial
     modo: str = Modo.QUALQUER.value
@@ -185,6 +178,7 @@ class PosicoesManager:
         self.path = path
         self.pos_letras = (692, 594)
         self.pos_chatbox = (838, 953)
+        self.turn_bar_rect = (600, 1010, 240, 32)  # x, y, width, height
 
     def load(self):
         if os.path.exists(self.path):
@@ -192,10 +186,15 @@ class PosicoesManager:
                 data = json.load(f)
             self.pos_letras = tuple(data.get("letras", self.pos_letras))
             self.pos_chatbox = tuple(data.get("chatbox", self.pos_chatbox))
+            self.turn_bar_rect = tuple(data.get("turn_bar", self.turn_bar_rect))
 
     def save(self):
         with open(self.path, "w", encoding="utf-8") as f:
-            json.dump({"letras": self.pos_letras, "chatbox": self.pos_chatbox}, f, ensure_ascii=False, indent=2)
+            json.dump({
+                "letras": self.pos_letras,
+                "chatbox": self.pos_chatbox,
+                "turn_bar": self.turn_bar_rect
+            }, f, ensure_ascii=False, indent=2)
 
 
 # ==============================
@@ -307,19 +306,104 @@ class Capturador:
         self.contador_falhas = 0
         self.limite_falhas = 5
         self.log = log_fn
+        self.turn_bar_reference = None
+        self._last_turn_capture = 0.0
+        self._warned_turn_rect = False
 
-    def detectar_chatbox(self):
+    def detectar_chatbox(self, refresh_reference=False):
         # Se não existir template, assume turno
         if not os.path.exists(self.cfg.template_chatbox):
+            if refresh_reference:
+                self._update_turn_reference()
             return True
         screen = np.array(ImageGrab.grab())
         gray = cv2.cvtColor(screen, cv2.COLOR_BGR2GRAY)
         template = cv2.imread(self.cfg.template_chatbox, 0)
         if template is None:
+            if refresh_reference:
+                self._update_turn_reference()
             return True
         res = cv2.matchTemplate(gray, template, cv2.TM_CCOEFF_NORMED)
         loc = np.where(res >= float(self.cfg.template_threshold))
-        return len(loc[0]) > 0
+        ativa = len(loc[0]) > 0
+        if ativa:
+            if refresh_reference:
+                self._update_turn_reference()
+        else:
+            self.turn_bar_reference = None
+            self._warned_turn_rect = False
+        return ativa
+
+    def capturar_barra_turno(self):
+        if not self.pos.turn_bar_rect or len(self.pos.turn_bar_rect) != 4:
+            return None
+        x, y, w, h = self.pos.turn_bar_rect
+        if w <= 0 or h <= 0:
+            return None
+        try:
+            shot = ImageGrab.grab(bbox=(x, y, x + w, y + h))
+        except Exception as exc:
+            self.log(f"Falha ao capturar barra de turno: {exc}")
+            return None
+        return cv2.cvtColor(np.array(shot), cv2.COLOR_BGR2GRAY)
+
+    def _update_turn_reference(self):
+        img = self.capturar_barra_turno()
+        if img is not None:
+            self.turn_bar_reference = img
+            self._last_turn_capture = time.time()
+            self._warned_turn_rect = False
+
+    def _similaridade_turno(self, atual):
+        if self.turn_bar_reference is None:
+            return 1.0
+        ref = self.turn_bar_reference
+        if atual.shape != ref.shape:
+            atual = cv2.resize(atual, (ref.shape[1], ref.shape[0]))
+        diff = cv2.absdiff(ref, atual)
+        score = 1.0 - (diff.mean() / 255.0)
+        return max(0.0, min(1.0, score))
+
+    def confirmar_turno_para_envio(self):
+        original_pos = None
+        moved_mouse = False
+        safe_target = getattr(self.pos, "pos_letras", None)
+        if safe_target and len(safe_target) == 2:
+            try:
+                original_pos = pyautogui.position()
+                pyautogui.moveTo(safe_target[0], safe_target[1], duration=0)
+                moved_mouse = True
+                time.sleep(0.04)
+            except Exception:
+                moved_mouse = False
+
+        try:
+            if not self.detectar_chatbox():
+                self.log("Recheque falhou: barra de turno não ativa.")
+                return False
+            atual = self.capturar_barra_turno()
+            if atual is None:
+                if not self._warned_turn_rect:
+                    self.log("Retângulo da barra de turno não configurado; envio cancelado.")
+                    self._warned_turn_rect = True
+                return False
+            if self.turn_bar_reference is None:
+                self.turn_bar_reference = atual
+                self._warned_turn_rect = False
+                return True
+            score = self._similaridade_turno(atual)
+            if score >= self.cfg.turn_bar_threshold:
+                self.turn_bar_reference = atual
+                self._warned_turn_rect = False
+                return True
+            self.log(f"Envio cancelado: similaridade da barra {score:.3f} abaixo do threshold {self.cfg.turn_bar_threshold:.3f}.")
+            return False
+        finally:
+            if moved_mouse and original_pos is not None:
+                try:
+                    pyautogui.moveTo(original_pos[0], original_pos[1], duration=0)
+                except Exception:
+                    pass
 
     def capturar_letras(self):
         x, y = self.pos.pos_letras
@@ -344,15 +428,18 @@ class Capturador:
 
 
 # ==============================
-# Digitação Humanizada
+# Digitação Humanizada + Estimador
 # ==============================
 
 class HumanTyper:
-    def __init__(self, cfg: AppConfig, log_fn):
+    def __init__(self, cfg: AppConfig, log_fn, is_my_turn_fn):
         self.cfg = cfg
         self.log = log_fn
+        self.is_my_turn = is_my_turn_fn  # mesma função usada para iniciar a jogada
         self._random = random.Random()
-        self.FAST_ERASE_TIME = 0.08  # ~80ms para Ctrl+A + Backspace
+        self.FAST_ERASE_TIME = 0.08     # ~80ms para Ctrl+A + Backspace
+        self.KEYPRESS_TIME = 0.0015     # ~1.5ms por tecla
+        self.BACKSPACE_KEY_TIME = 0.02  # ~20ms para backspace
 
     # Sem jitter: clique direto
     def _focus_chat(self, pos):
@@ -378,6 +465,78 @@ class HumanTyper:
         if (idx + 1) % max(1, self.cfg.humanizar.pausa_cada) == 0 and idx + 1 < total:
             time.sleep(self._random.uniform(self.cfg.humanizar.pausa_min, self.cfg.humanizar.pausa_max))
 
+    # ---------- Modelo de tempo (esperado) ----------
+    def _avg_letter_delay_base(self):
+        h = self.cfg.humanizar
+        base = clamp(h.delay_entre_letras_ms / 1000.0, 0.0005, 0.2)
+        if h.perfil == VelocidadePerfil.GRADUAL.value:
+            base *= 0.8    # média do fator 0.6..1.0
+        elif h.perfil == VelocidadePerfil.RAPIDA.value:
+            base *= 0.6
+        elif h.perfil == VelocidadePerfil.ALEATORIA.value:
+            base *= 1.0    # expectativa de U(0.65,1.35)
+        base += self.cfg.humanizar.variacao_delay * 0.5
+        return base
+
+    def _pausas_periodicas_time(self, n_chars):
+        h = self.cfg.humanizar
+        if h.pausa_cada <= 0 or n_chars <= 1:
+            return 0.0
+        pausas = (n_chars - 1) // h.pausa_cada
+        return pausas * ((h.pausa_min + h.pausa_max) / 2.0)
+
+    def _expected_numbers_extra(self, n_chars, include_nums):
+        if not include_nums:
+            return 0.0
+        return 0.12 * n_chars * self.KEYPRESS_TIME
+
+    def _expected_micro_error_extra(self, n_chars, base_letter_delay):
+        p = self.cfg.humanizar.chance_erro
+        return n_chars * p * (self.KEYPRESS_TIME + base_letter_delay + self.BACKSPACE_KEY_TIME)
+
+    def _enter_hesitation_avg(self):
+        h = self.cfg.humanizar
+        return (h.hesitacao_enter_min + h.hesitacao_enter_max) / 2.0
+
+    def _typing_block_expected(self, n_chars, envia, include_pensar3=False, think_ms=None, include_nums=False):
+        t = 0.0
+        # pré-delay por bloco
+        t += self.cfg.delay_antes_digitar_ms / 1000.0
+
+        base_d = self._avg_letter_delay_base()
+
+        # digitação base + keypress
+        t += n_chars * (base_d + self.KEYPRESS_TIME)
+
+        # pausas periódicas
+        t += self._pausas_periodicas_time(n_chars)
+
+        # micro-erro esperado
+        t += self._expected_micro_error_extra(n_chars, base_d)
+
+        # números extra
+        t += self._expected_numbers_extra(n_chars, include_nums)
+
+        # pensar após 3 letras
+        if include_pensar3 and n_chars >= 3:
+            val_ms = think_ms if think_ms is not None else self.cfg.humanizar.pensar_3letras_pausa_ms
+            t += max(0.0, val_ms / 1000.0)
+
+        # hesitação enter
+        if envia:
+            t += self._enter_hesitation_avg()
+
+        return t
+
+    # ---------- Execução real
+    # Agora: verifica UMA VEZ se ainda é a vez antes de apertar Enter. Se não for, cancela.
+    def _try_send_enter_only_if_turn(self) -> bool:
+        if not self.is_my_turn():
+            self.log("Envio cancelado: não é mais a sua vez no momento do ENTER.")
+            return False
+        pyautogui.press('enter')
+        return True
+
     def _digitar_texto(self, texto: str, pos_chatbox, enviar=False, override_nums=False):
         self._focus_chat(pos_chatbox)
         time.sleep(self.cfg.delay_antes_digitar_ms / 1000.0)
@@ -402,18 +561,18 @@ class HumanTyper:
 
         if enviar:
             time.sleep(self._random.uniform(h.hesitacao_enter_min, h.hesitacao_enter_max))
-            pyautogui.press('enter')
+            return self._try_send_enter_only_if_turn()
+        return True
 
     def _erase_all(self, pos_chatbox):
-        # Seleciona tudo e apaga de uma vez
         self._focus_chat(pos_chatbox)
         pyautogui.hotkey('ctrl', 'a')
         time.sleep(0.03)
         pyautogui.press('backspace')
         time.sleep(0.02)
+        return True
 
     def digitar_pensando_3(self, palavra: str, pos_chatbox, think_ms=500, override_nums=False):
-        """Digita 3 primeiras letras, pausa (ms), e finaliza a palavra."""
         self._focus_chat(pos_chatbox)
         time.sleep(self.cfg.delay_antes_digitar_ms / 1000.0)
 
@@ -423,7 +582,6 @@ class HumanTyper:
         pausa_idx = min(2, n - 1)  # após a 3ª letra (índice 2), se possível
 
         for i, ch in enumerate(palavra):
-            # micro-erro por caractere
             if self._random.random() < h.chance_erro and ch.isalpha():
                 errado = self._random.choice(letras_erradas_pool)
                 pyautogui.typewrite(errado)
@@ -432,42 +590,39 @@ class HumanTyper:
 
             pyautogui.typewrite(ch)
 
-            # números aleatórios (se ativo)
             use_nums = (h.inserir_numeros or override_nums)
             if use_nums and self._random.random() < 0.12:
                 pyautogui.typewrite(str(self._random.randint(0, 9)))
 
-            # pausa “pensando” logo após a 3ª letra
             if i == pausa_idx:
                 time.sleep(max(0.0, think_ms / 1000.0))
 
             self._delay_letra(i, n)
 
-        # enviar
         time.sleep(self._random.uniform(h.hesitacao_enter_min, h.hesitacao_enter_max))
-        pyautogui.press('enter')
+        return self._try_send_enter_only_if_turn()
 
     def digitar(self, palavra: str, pos_chatbox, override_nums=False):
         if self.cfg.modo_teste:
             self.log(f"[TESTE] -> {palavra}")
-            return
-        self._digitar_texto(palavra, pos_chatbox, enviar=True, override_nums=override_nums)
+            return True
+        return self._digitar_texto(palavra, pos_chatbox, enviar=True, override_nums=override_nums)
 
     def digitar_quick(self, palavra: str, pos_chatbox):
-        # caminho rápido: sem erros, sem números, sem pausas extras
         self._focus_chat(pos_chatbox)
         time.sleep(0.05)  # mínimo para focar
         for ch in palavra:
             pyautogui.typewrite(ch)
             time.sleep(0.001)
-        pyautogui.press('enter')
+        return self._try_send_enter_only_if_turn()
 
     def frase_engracada_e_apaga(self, pos_chatbox):
         frases = (self.cfg.humanizar.frases_customizadas or []) + FRASES_ENGRACADAS_DEFAULT
         frase = self._random.choice(frases)
-        # digita a frase e apaga tudo de uma vez
-        self._digitar_texto(frase, pos_chatbox, enviar=False)
-        self._erase_all(pos_chatbox)
+        ok = self._digitar_texto(frase, pos_chatbox, enviar=False)
+        if not ok:
+            return False
+        return self._erase_all(pos_chatbox)
 
     def ensaiar_palavra_e_apagar(self, palavra, pos_chatbox):
         if len(palavra) <= 3:
@@ -475,8 +630,10 @@ class HumanTyper:
         else:
             k = self._random.randint(2, min(len(palavra)-1, 5))
             rabisco = palavra[:k] + self._random.choice(["..", "...", "!"])
-        self._digitar_texto(rabisco, pos_chatbox, enviar=False)
-        self._erase_all(pos_chatbox)
+        ok = self._digitar_texto(rabisco, pos_chatbox, enviar=False)
+        if not ok:
+            return False
+        return self._erase_all(pos_chatbox)
 
     def falha_proposital(self, palavra_correta, pos_chatbox):
         if len(palavra_correta) > 3:
@@ -486,11 +643,11 @@ class HumanTyper:
                       palavra_correta[i+1:])
         else:
             errada = palavra_correta + self._random.choice(string.ascii_lowercase)
-        self._digitar_texto(errada, pos_chatbox, enviar=True)
-        return errada
+        ok = self._digitar_texto(errada, pos_chatbox, enviar=True)
+        return errada if ok else None
 
     def erro_enter_e_corrige(self, palavra_correta, pos_chatbox):
-        # altera UMA letra e envia
+        # envia UMA errada + ENTER, depois a correta + ENTER
         if len(palavra_correta) > 1:
             i = self._random.randint(0, len(palavra_correta)-1)
             errada = (palavra_correta[:i] +
@@ -499,69 +656,56 @@ class HumanTyper:
         else:
             errada = palavra_correta + self._random.choice(string.ascii_lowercase)
 
-        # envia a errada (jogo apaga), e depois envia a correta
-        self._digitar_texto(errada, pos_chatbox, enviar=True)
-        self._digitar_texto(palavra_correta, pos_chatbox, enviar=True)
+        ok1 = self._digitar_texto(errada, pos_chatbox, enviar=True)
+        ok2 = self._digitar_texto(palavra_correta, pos_chatbox, enviar=True) if ok1 else False
+        return bool(ok1 and ok2)
 
     # ---------- Estimativa de tempo ----------
-    def _avg_letter_delay(self, length):
+    def estimate_round_time(self, palavra, use_frase, use_ensaio, use_falha, use_erro_enter, use_pensar3, include_nums):
+        total = 0.0
+        bd = {"frase": 0.0, "ensaio": 0.0, "falha": 0.0, "erro_enter": 0.0, "typing": 0.0}
+
         h = self.cfg.humanizar
-        base = clamp(h.delay_entre_letras_ms / 1000.0, 0.0005, 0.2)
-        if h.perfil == VelocidadePerfil.GRADUAL.value:
-            base *= 0.8   # média ~0.8 do fator 0.6..1.0
-        elif h.perfil == VelocidadePerfil.RAPIDA.value:
-            base *= 0.6
-        elif h.perfil == VelocidadePerfil.ALEATORIA.value:
-            base *= 1.0  # média do U(0.65,1.35)
-        base += h.variacao_delay * 0.5
-        if h.pausa_cada > 0 and length > 1:
-            pausas = (length - 1) // h.pausa_cada
-            base_total_pausas = pausas * ((h.pausa_min + h.pausa_max) / 2.0) / max(1, length)
-            base += base_total_pausas
-        base += h.chance_erro * (2.0 * base)  # custo esperado de erro por caractere
-        return base
 
-    def estimate_round_time(self, palavra, use_frase, use_ensaio, use_falha, use_erro_enter, use_pensar3):
-        total = self.cfg.delay_antes_digitar_ms / 1000.0
-        h = self.cfg.humanizar
-        avg_enter = (h.hesitacao_enter_min + h.hesitacao_enter_max) / 2.0
-
-        def bloco_texto_len(n_chars, envia):
-            t = n_chars * self._avg_letter_delay(n_chars)
-            if envia:
-                t += avg_enter
-            return t
-
-        # frase engraçada (digita + apagar tudo de uma vez)
+        # frase engraçada
         if use_frase:
             frase = random.choice((h.frases_customizadas or []) + FRASES_ENGRACADAS_DEFAULT)
-            total += bloco_texto_len(len(frase), envia=False)
-            total += self.FAST_ERASE_TIME  # Ctrl+A + Backspace
+            part = self._typing_block_expected(len(frase), envia=False, include_pensar3=False, include_nums=False)
+            part += self.FAST_ERASE_TIME
+            total += part
+            bd["frase"] = part
 
-        # ensaio (digita + apagar tudo)
+        # ensaio
         if use_ensaio:
             ens_len = 3 if len(palavra) <= 3 else min(5, max(2, len(palavra)//2))
-            total += bloco_texto_len(ens_len, envia=False)
-            total += self.FAST_ERASE_TIME
+            part = self._typing_block_expected(ens_len, envia=False, include_pensar3=False, include_nums=False)
+            part += self.FAST_ERASE_TIME
+            total += part
+            bd["ensaio"] = part
+
+        n = len(palavra)
 
         if use_falha:
             # envia uma palavra errada e encerra
-            total += bloco_texto_len(len(palavra), envia=True)
-            return total
+            part = self._typing_block_expected(n, envia=True, include_pensar3=False, include_nums=include_nums)
+            total += part
+            bd["falha"] = part
+            return total, bd
 
         if use_erro_enter:
-            # envia errada (uma letra diferente) + envia correta
-            total += bloco_texto_len(len(palavra), envia=True)
-            total += bloco_texto_len(len(palavra), envia=True)
-            return total
+            # envia errada + envia correta
+            part1 = self._typing_block_expected(n, envia=True, include_pensar3=False, include_nums=include_nums)
+            part2 = self._typing_block_expected(n, envia=True, include_pensar3=False, include_nums=include_nums)
+            total += (part1 + part2)
+            bd["erro_enter"] = part1 + part2
+            return total, bd
 
-        # pensar 3 letras (pausa extra após 3 primeiras)
-        if use_pensar3 and len(palavra) >= 3:
-            total += (h.pensar_3letras_pausa_ms / 1000.0)
+        # caminho normal (pode incluir pensar 3 letras)
+        part = self._typing_block_expected(n, envia=True, include_pensar3=use_pensar3, think_ms=h.pensar_3letras_pausa_ms, include_nums=include_nums)
+        total += part
+        bd["typing"] = part
 
-        # caminho normal: envia correta uma vez
-        total += bloco_texto_len(len(palavra), envia=True)
-        return total
+        return total, bd
 
 
 # ==============================
@@ -577,7 +721,7 @@ class BotCore:
         self.dict = Dicionario()
         self.selector = Selecionador(cfg)
         self.capt = Capturador(pos, cfg, self._log)
-        self.typer = HumanTyper(cfg, self._log)
+        self.typer = HumanTyper(cfg, self._log, self.capt.confirmar_turno_para_envio)
 
         self.executando = False
         self.modo_atual = cfg.modo
@@ -644,13 +788,17 @@ class BotCore:
                     self._log("Processo parado.")
                     return
 
-            if self.capt.detectar_chatbox():
+            if self.capt.detectar_chatbox(refresh_reference=True):
                 frag = self.capt.capturar_letras()
                 if frag:
                     self._log(f"Letras detectadas: {frag}")
                     candidatos = self.dict.filtrar(frag)
                     if not candidatos:
-                        self._log("Nenhuma palavra encontrada para essas letras.")
+                        # Regra: quando não achar no dicionário, fala a frase definida
+                        self._log("Nenhuma palavra encontrada – enviando frase padrão.")
+                        ok_send = self.typer.digitar_quick(FRASE_QUANDO_NAO_TEM, self.pos.pos_chatbox)
+                        if not ok_send:
+                            self._log("Envio da frase padrão cancelado (não era mais a sua vez).")
                     else:
                         # preferir palavras que comecem com as 3 primeiras letras do frag
                         use_pensar3 = False
@@ -677,14 +825,15 @@ class BotCore:
                         # Números: válidos nesta rodada?
                         use_nums_this_round = self.cfg.humanizar.inserir_numeros and (self.numeros_restantes > 0)
 
-                        # estimativa de tempo (inclui pensar3)
-                        est = self.typer.estimate_round_time(
+                        # estimativa de tempo (inclui TUDO da humanização)
+                        est, breakdown = self.typer.estimate_round_time(
                             escolha,
                             use_frase=trig_frase,
                             use_ensaio=trig_ensaio,
                             use_falha=trig_falha,
                             use_erro_enter=trig_erro_enter,
-                            use_pensar3=use_pensar3
+                            use_pensar3=use_pensar3,
+                            include_nums=use_nums_this_round
                         )
                         flags_txt = []
                         if trig_frase: flags_txt.append("frase")
@@ -693,7 +842,9 @@ class BotCore:
                         if trig_erro_enter: flags_txt.append("errEnter")
                         if use_pensar3: flags_txt.append("pensar3")
                         flags_str = ", ".join(flags_txt) if flags_txt else "nenhum"
-                        self._log(f"Estimativa do round: ~{est:.2f}s | flags: {flags_str}")
+
+                        bd_txt = " | ".join([f"{k}={v:.2f}s" for k, v in breakdown.items() if v > 0.0]) or "typing=0.00s"
+                        self._log(f"Estimativa do round: ~{est:.2f}s | flags: {flags_str} | breakdown: {bd_txt}")
 
                         fast_path = est > self.cfg.limite_tempo_round_s
                         if fast_path:
@@ -706,49 +857,62 @@ class BotCore:
                         try:
                             if trig_falha:
                                 enviada = self.typer.falha_proposital(escolha, self.pos.pos_chatbox)
-                                self._log(f"Falha proposital enviada: {enviada}")
-                                self.erros_propositais += 1
-                                self.acertos_consecutivos = 0
+                                if enviada is None:
+                                    self._log("Falha proposital cancelada (não era a sua vez no ENTER).")
+                                else:
+                                    self._log(f"Falha proposital enviada: {enviada}")
+                                    self.erros_propositais += 1
+                                    self.acertos_consecutivos = 0
 
                             elif trig_erro_enter:
                                 self._log("Enviando UMA letra errada + ENTER; depois corrigindo.")
-                                self.typer.erro_enter_e_corrige(escolha, self.pos.pos_chatbox)
-                                self.selector.registrar_uso(escolha, self.modo_atual)
-                                self.historico.append(escolha)
-                                self.acertos_consecutivos += 1
+                                ok = self.typer.erro_enter_e_corrige(escolha, self.pos.pos_chatbox)
+                                if ok:
+                                    self.selector.registrar_uso(escolha, self.modo_atual)
+                                    self.historico.append(escolha)
+                                    self.acertos_consecutivos += 1
+                                    if use_nums_this_round:
+                                        self.numeros_restantes = max(0, self.numeros_restantes - 1)
+                                        if self.numeros_restantes == 0:
+                                            self.cfg.humanizar.inserir_numeros = False
+                                            self._log("Rodadas com números concluídas. Inserção de números desativada.")
+                                else:
+                                    self._log("Fluxo errEnter cancelado (não era sua vez em algum ENTER).")
 
                             else:
                                 if trig_frase:
                                     self._log("Frase engraçada & apagar (simulação).")
                                     self.typer.frase_engracada_e_apaga(self.pos.pos_chatbox)
+
                                 if trig_ensaio:
                                     self._log("Ensaio/rascunho & apagar (simulação).")
                                     self.typer.ensaiar_palavra_e_apagar(escolha, self.pos.pos_chatbox)
 
                                 if fast_path:
-                                    self.typer.digitar_quick(escolha, self.pos.pos_chatbox)
+                                    ok_send = self.typer.digitar_quick(escolha, self.pos.pos_chatbox)
                                 else:
                                     if use_pensar3 and len(escolha) >= 3:
                                         self._log(f"Pensar após 3 letras: pausa {self.cfg.humanizar.pensar_3letras_pausa_ms} ms.")
-                                        self.typer.digitar_pensando_3(
+                                        ok_send = self.typer.digitar_pensando_3(
                                             escolha,
                                             self.pos.pos_chatbox,
                                             think_ms=self.cfg.humanizar.pensar_3letras_pausa_ms,
                                             override_nums=use_nums_this_round
                                         )
                                     else:
-                                        self.typer.digitar(escolha, self.pos.pos_chatbox, override_nums=use_nums_this_round)
+                                        ok_send = self.typer.digitar(escolha, self.pos.pos_chatbox, override_nums=use_nums_this_round)
 
-                                self.selector.registrar_uso(escolha, self.modo_atual)
-                                self.historico.append(escolha)
-                                self.acertos_consecutivos += 1
-
-                            # controla rodadas com números
-                            if use_nums_this_round:
-                                self.numeros_restantes = max(0, self.numeros_restantes - 1)
-                                if self.numeros_restantes == 0:
-                                    self.cfg.humanizar.inserir_numeros = False
-                                    self._log("Rodadas com números concluídas. Inserção de números desativada.")
+                                if ok_send:
+                                    self.selector.registrar_uso(escolha, self.modo_atual)
+                                    self.historico.append(escolha)
+                                    self.acertos_consecutivos += 1
+                                    if use_nums_this_round:
+                                        self.numeros_restantes = max(0, self.numeros_restantes - 1)
+                                        if self.numeros_restantes == 0:
+                                            self.cfg.humanizar.inserir_numeros = False
+                                            self._log("Rodadas com números concluídas. Inserção de números desativada.")
+                                else:
+                                    self._log("Envio cancelado no ENTER (não era mais a sua vez).")
 
                         except Exception as e:
                             self._log(f"Falha ao digitar: {e}")
@@ -788,7 +952,7 @@ class AppUI:
         self._build_menubar()
         self._build_tabs()
 
-        # F8 -> Parar
+        # F8 -> Parar (kill switch global)
         threading.Thread(target=self._monitor_f8, daemon=True).start()
 
         # Labels arco-íris (estéticas)
@@ -888,6 +1052,11 @@ class AppUI:
         self.spn_thr.delete(0, tk.END); self.spn_thr.insert(0, str(cfg.template_threshold))
         self.spn_thr.grid(row=2, column=1, sticky='w')
 
+        ttk.Label(frm, text="Threshold Barra de Turno (0-1):").grid(row=3, column=0, sticky='w')
+        self.spn_turn_thr = ttk.Spinbox(frm, from_=0.5, to=0.99, increment=0.01, width=6)
+        self.spn_turn_thr.delete(0, tk.END); self.spn_turn_thr.insert(0, str(cfg.turn_bar_threshold))
+        self.spn_turn_thr.grid(row=3, column=1, sticky='w')
+
         ttk.Separator(parent, orient='horizontal').pack(fill='x', padx=8, pady=8)
 
         posf = ttk.Frame(parent); posf.pack(padx=8, pady=8, fill='x')
@@ -895,10 +1064,13 @@ class AppUI:
         ttk.Button(posf, text="Atualizar (clique na tela)", command=self._capturar_pos_letras).grid(row=0, column=1, padx=6)
         ttk.Label(posf, text=f"Posição Chatbox: {self.pos_mgr.pos_chatbox}").grid(row=1, column=0, sticky='w', padx=4)
         ttk.Button(posf, text="Atualizar (clique na tela)", command=self._capturar_pos_chat).grid(row=1, column=1, padx=6)
+        self.lbl_turn_rect = ttk.Label(posf, text=f"Retângulo Barra Turno: {self.pos_mgr.turn_bar_rect}")
+        self.lbl_turn_rect.grid(row=2, column=0, sticky='w', padx=4)
+        ttk.Button(posf, text="Atualizar retângulo", command=self._capturar_turn_bar).grid(row=2, column=1, padx=6)
 
         ttk.Separator(parent, orient='horizontal').pack(fill='x', padx=8, pady=8)
 
-        delf = ttk.LabelFrame(parent, text="Delays (ms) / Limite de tempo")
+        delf = ttk.LabelFrame(parent, text="Delays (ms)")
         delf.pack(padx=8, pady=8, fill='x')
 
         self.sld_ciclo   = ttk.Scale(delf, from_=80,  to=1000, value=cfg.delay_ciclo_ms,        command=lambda e: None)
@@ -917,14 +1089,10 @@ class AppUI:
         ttk.Label(delf, textvariable=self._bind_val(self.sld_antes)).grid(row=2, column=2, sticky='w', padx=6)
         self.sld_antes.grid(row=2, column=1, sticky='we', padx=6, pady=4)
 
-        # ---- Limite por rodada agora com INPUT ----
+        # Aviso do limite por rodada
         limf = ttk.LabelFrame(parent, text="Limite estimado por rodada")
         limf.pack(padx=8, pady=8, fill='x')
-        ttk.Label(limf, text="Segundos (ex: 4.5):").grid(row=0, column=0, sticky='w')
-        self.ent_limiteS = ttk.Entry(limf, width=10)
-        self.ent_limiteS.insert(0, f"{cfg.limite_tempo_round_s:.2f}")
-        self.ent_limiteS.grid(row=0, column=1, sticky='w', padx=6)
-        ttk.Label(limf, text="(se a estimativa exceder, envia direto a palavra correta)").grid(row=0, column=2, sticky='w', padx=6)
+        ttk.Label(limf, text=f"Atual: {cfg.limite_tempo_round_s:.2f} s (configure na seção abaixo)").grid(row=0, column=0, sticky='w')
 
         tog = ttk.LabelFrame(parent, text="Opções")
         tog.pack(padx=8, pady=8, fill='x')
@@ -946,6 +1114,14 @@ class AppUI:
         self.spn_top = ttk.Spinbox(tog, from_=0, to=10, width=5)
         self.spn_top.delete(0, tk.END); self.spn_top.insert(0, str(self.cfg_mgr.config.mostrar_top_n))
         self.spn_top.grid(row=2, column=2, sticky='w', padx=4)
+
+        # bloco para setar limite por rodada
+        setf = ttk.LabelFrame(parent, text="Ajustes rápidos")
+        setf.pack(padx=8, pady=8, fill='x')
+        ttk.Label(setf, text="Limite estimado por rodada (s):").grid(row=0, column=0, sticky='w')
+        self.ent_limiteS = ttk.Entry(setf, width=10)
+        self.ent_limiteS.insert(0, f"{cfg.limite_tempo_round_s:.2f}")
+        self.ent_limiteS.grid(row=0, column=1, sticky='w', padx=6)
 
         ttk.Button(parent, text="Aplicar / Salvar", command=self._salvar_config).pack(pady=8)
 
@@ -1109,14 +1285,20 @@ class AppUI:
         self.bot.parar()
         self.lbl_status.config(text="Status: Parado", foreground="red")
 
+    def _handle_kill_switch(self):
+        if self.bot.executando:
+            self.append_terminal("F8 pressionado - kill switch acionado.")
+        self._parar()
+
     def _monitor_f8(self):
         while True:
             try:
-                if keyboard.is_pressed('F8'):
-                    self._parar()
-                    break
-            except:
-                pass
+                if keyboard.is_pressed('f8'):
+                    self.root.after(0, self._handle_kill_switch)
+                    while keyboard.is_pressed('f8'):
+                        time.sleep(0.05)
+            except Exception:
+                time.sleep(0.5)
             time.sleep(0.1)
 
     # ---------- Navegação arquivos ----------
@@ -1141,11 +1323,27 @@ class AppUI:
         self.append_terminal("Clique na chatbox do jogo (onde digita as palavras).")
         self._capturar_posicao(lambda x, y: self._set_pos('chat', x, y))
 
+    def _capturar_turn_bar(self):
+        self.append_terminal("Clique no canto superior esquerdo da barra de turno e depois no canto inferior direito.")
+        self._capturar_retangulo(self._set_turn_bar)
+
     def _capturar_posicao(self, callback):
         def on_click(x, y, button, pressed):
             if pressed:
                 callback(x, y)
                 return False
+        threading.Thread(target=lambda: mouse.Listener(on_click=on_click).start(), daemon=True).start()
+
+    def _capturar_retangulo(self, callback):
+        pontos = []
+
+        def on_click(x, y, button, pressed):
+            if pressed:
+                pontos.append((x, y))
+                self.append_terminal(f"Ponto {len(pontos)} registrado: ({x}, {y})")
+                if len(pontos) >= 2:
+                    callback(pontos[0], pontos[1])
+                    return False
         threading.Thread(target=lambda: mouse.Listener(on_click=on_click).start(), daemon=True).start()
 
     def _set_pos(self, which, x, y):
@@ -1156,12 +1354,28 @@ class AppUI:
             self.pos_mgr.pos_chatbox = (x, y)
             self.append_terminal(f"Posição Chatbox -> {self.pos_mgr.pos_chatbox}")
 
+    def _set_turn_bar(self, p1, p2):
+        x1, y1 = p1
+        x2, y2 = p2
+        left = int(min(x1, x2))
+        top = int(min(y1, y2))
+        width = int(abs(x2 - x1)) or 1
+        height = int(abs(y2 - y1)) or 1
+        self.pos_mgr.turn_bar_rect = (left, top, width, height)
+        if hasattr(self, 'lbl_turn_rect'):
+            self.lbl_turn_rect.config(text=f"Retângulo Barra Turno: {self.pos_mgr.turn_bar_rect}")
+        self.append_terminal(f"Barra de turno definida: {self.pos_mgr.turn_bar_rect}")
+        self.bot.capt.turn_bar_reference = None
+        self.bot.capt._warned_turn_rect = False
+
     # ---------- Salvar/Aplicar ----------
     def _capturar_config_da_ui(self):
         cfg = self.cfg_mgr.config
         cfg.caminho_dicionario = self.ent_dict.get().strip()
         cfg.template_chatbox = self.ent_tpl.get().strip()
         try: cfg.template_threshold = float(self.spn_thr.get())
+        except: pass
+        try: cfg.turn_bar_threshold = float(self.spn_turn_thr.get())
         except: pass
 
         cfg.delay_ciclo_ms = int(float(self.sld_ciclo.get()))
@@ -1171,8 +1385,7 @@ class AppUI:
         # limite via input
         try:
             cfg.limite_tempo_round_s = float(self.ent_limiteS.get().replace(',', '.'))
-        except:
-            pass  # mantém valor atual se inválido
+        except: pass
 
         cfg.modo_teste = self.var_modo_teste.get()
         cfg.salvar_log = self.var_log.get()
@@ -1221,6 +1434,8 @@ class AppUI:
         self.cfg_mgr.save()
         self.append_terminal("Configurações salvas.")
         self.bot.cfg = self.cfg_mgr.config  # atualiza bot
+        self.bot.capt.cfg = self.cfg_mgr.config
+        self.bot.typer.cfg = self.cfg_mgr.config
 
     def _salvar_posicoes(self):
         self.pos_mgr.save()
