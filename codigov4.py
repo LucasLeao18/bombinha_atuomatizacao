@@ -19,7 +19,7 @@ from collections import deque
 
 # UI
 import tkinter as tk
-from tkinter import ttk, Toplevel, Menu, scrolledtext, filedialog, messagebox
+from tkinter import ttk, Toplevel, filedialog, messagebox
 from pynput import mouse
 
 
@@ -538,6 +538,9 @@ class HumanTyper:
         return True
 
     def _digitar_texto(self, texto: str, pos_chatbox, enviar=False, override_nums=False):
+        if self.cfg.modo_teste:
+            self.log(f"[TESTE] {'enviaria' if enviar else 'digitaria'} -> {texto}")
+            return True
         self._focus_chat(pos_chatbox)
         time.sleep(self.cfg.delay_antes_digitar_ms / 1000.0)
 
@@ -565,6 +568,9 @@ class HumanTyper:
         return True
 
     def _erase_all(self, pos_chatbox):
+        if self.cfg.modo_teste:
+            self.log("[TESTE] apagaria o campo.")
+            return True
         self._focus_chat(pos_chatbox)
         pyautogui.hotkey('ctrl', 'a')
         time.sleep(0.03)
@@ -573,6 +579,9 @@ class HumanTyper:
         return True
 
     def digitar_pensando_3(self, palavra: str, pos_chatbox, think_ms=500, override_nums=False):
+        if self.cfg.modo_teste:
+            self.log(f"[TESTE] enviaria (pensando 3) -> {palavra}")
+            return True
         self._focus_chat(pos_chatbox)
         time.sleep(self.cfg.delay_antes_digitar_ms / 1000.0)
 
@@ -603,12 +612,12 @@ class HumanTyper:
         return self._try_send_enter_only_if_turn()
 
     def digitar(self, palavra: str, pos_chatbox, override_nums=False):
-        if self.cfg.modo_teste:
-            self.log(f"[TESTE] -> {palavra}")
-            return True
         return self._digitar_texto(palavra, pos_chatbox, enviar=True, override_nums=override_nums)
 
     def digitar_quick(self, palavra: str, pos_chatbox):
+        if self.cfg.modo_teste:
+            self.log(f"[TESTE] enviaria (rápido) -> {palavra}")
+            return True
         self._focus_chat(pos_chatbox)
         time.sleep(0.05)  # mínimo para focar
         for ch in palavra:
@@ -924,370 +933,1137 @@ class BotCore:
 
 
 # ==============================
-# Interface Gráfica (Tkinter + ttk)
+# Interface Gráfica – Tema escuro moderno (Tkinter puro)
 # ==============================
 
+import queue
+
+
+class T:
+    """Paleta, espaçamentos e tipografia da interface."""
+    BG        = "#0b0e14"
+    SIDEBAR   = "#0f131c"
+    SURFACE   = "#141924"
+    SURFACE_2 = "#1b2230"
+    HOVER     = "#232c3d"
+    BORDER    = "#242c3b"
+
+    TEXT      = "#e7ebf3"
+    TEXT_DIM  = "#98a2b6"
+    TEXT_MUTE = "#5f6a7d"
+
+    ACCENT    = "#6c8cff"
+    ACCENT_D  = "#5878ee"
+    SUCCESS   = "#37d399"
+    SUCCESS_D = "#2bb886"
+    DANGER    = "#ff6b6b"
+    DANGER_D  = "#ef5a5a"
+    WARN      = "#ffb454"
+    PURPLE    = "#b48cff"
+
+    FONT       = ("Segoe UI", 10)
+    FONT_SM    = ("Segoe UI", 9)
+    FONT_BOLD  = ("Segoe UI Semibold", 10)
+    FONT_H1    = ("Segoe UI Semibold", 16)
+    FONT_H2    = ("Segoe UI Semibold", 11)
+    FONT_BIG   = ("Segoe UI Semibold", 24)
+    FONT_MONO  = ("Consolas", 10)
+
+
+# ------------------------------
+# Widgets customizados
+# ------------------------------
+
+_BTN_VARIANTS = {
+    #          bg           hover        fg          border
+    "primary": (T.ACCENT,   T.ACCENT_D,  "#ffffff",  T.ACCENT),
+    "success": (T.SUCCESS,  T.SUCCESS_D, "#04211a",  T.SUCCESS),
+    "danger":  (T.DANGER,   T.DANGER_D,  "#2b0a0a",  T.DANGER),
+    "ghost":   (T.SURFACE_2, T.HOVER,    T.TEXT,     T.BORDER),
+    "subtle":  (T.SURFACE,  T.HOVER,     T.TEXT_DIM, T.BORDER),
+}
+
+
+class Btn(tk.Frame):
+    """Botão desenhado à mão: hover, variantes de cor e estado desabilitado."""
+
+    def __init__(self, master, text, command=None, variant="ghost",
+                 icon="", padx=16, pady=8, font=None, width=None):
+        bg, hover, fg, border = _BTN_VARIANTS[variant]
+        super().__init__(master, bg=bg, highlightthickness=1,
+                         highlightbackground=border, highlightcolor=border, cursor="hand2")
+        self._bg, self._hover, self._fg = bg, hover, fg
+        self._command = command
+        self._enabled = True
+
+        label = f"{icon}  {text}".strip() if icon else text
+        self.lbl = tk.Label(self, text=label, bg=bg, fg=fg,
+                            font=font or T.FONT_BOLD, padx=padx, pady=pady, cursor="hand2")
+        if width:
+            self.lbl.configure(width=width)
+        self.lbl.pack(fill="both", expand=True)
+
+        for w in (self, self.lbl):
+            w.bind("<Enter>", self._on_enter)
+            w.bind("<Leave>", self._on_leave)
+            w.bind("<Button-1>", self._on_click)
+
+    def _paint(self, bg):
+        self.configure(bg=bg)
+        self.lbl.configure(bg=bg)
+
+    def _on_enter(self, _=None):
+        if self._enabled:
+            self._paint(self._hover)
+
+    def _on_leave(self, _=None):
+        if self._enabled:
+            self._paint(self._bg)
+
+    def _on_click(self, _=None):
+        if self._enabled and self._command:
+            self._command()
+
+    def set_text(self, text):
+        self.lbl.configure(text=text)
+
+    def set_enabled(self, enabled: bool):
+        self._enabled = bool(enabled)
+        if self._enabled:
+            self._paint(self._bg)
+            self.lbl.configure(fg=self._fg, cursor="hand2")
+            self.configure(cursor="hand2")
+        else:
+            self._paint(T.SURFACE_2)
+            self.lbl.configure(fg=T.TEXT_MUTE, cursor="arrow")
+            self.configure(cursor="arrow")
+
+
+class Toggle(tk.Frame):
+    """Switch estilo mobile (on/off) com rótulo opcional."""
+
+    def __init__(self, master, text="", value=False, bg=T.SURFACE, command=None):
+        super().__init__(master, bg=bg)
+        self._value = bool(value)
+        self._command = command
+        self.cv = tk.Canvas(self, width=40, height=22, bg=bg, highlightthickness=0, cursor="hand2")
+        self.cv.pack(side="left")
+        self.cv.bind("<Button-1>", self._toggle)
+        if text:
+            self.lbl = tk.Label(self, text=text, bg=bg, fg=T.TEXT, font=T.FONT, cursor="hand2")
+            self.lbl.pack(side="left", padx=(9, 0))
+            self.lbl.bind("<Button-1>", self._toggle)
+        self._draw()
+
+    def _draw(self):
+        c = T.ACCENT if self._value else "#2c3546"
+        self.cv.delete("all")
+        self.cv.create_oval(1, 1, 21, 21, fill=c, outline=c)
+        self.cv.create_oval(18, 1, 38, 21, fill=c, outline=c)
+        self.cv.create_rectangle(11, 1, 28, 21, fill=c, outline=c)
+        kx = 27 if self._value else 12
+        self.cv.create_oval(kx - 8, 3, kx + 8, 19, fill="#ffffff", outline="")
+
+    def _toggle(self, _=None):
+        self._value = not self._value
+        self._draw()
+        if self._command:
+            self._command(self._value)
+
+    def get(self):
+        return self._value
+
+    def set(self, value):
+        self._value = bool(value)
+        self._draw()
+
+
+class Slider(tk.Frame):
+    """Slider desenhado em Canvas: trilha arredondada, parte preenchida e knob."""
+
+    def __init__(self, master, from_=0, to=100, value=0, suffix="", decimals=0,
+                 bg=T.SURFACE, length=200, command=None):
+        super().__init__(master, bg=bg)
+        self.from_, self.to = float(from_), float(to)
+        self._value = float(value)
+        self.decimals, self.suffix = decimals, suffix
+        self._command = command
+        self._hot = False
+
+        self.cv = tk.Canvas(self, height=26, width=length, bg=bg, highlightthickness=0, cursor="hand2")
+        self.cv.pack(side="left", fill="x", expand=True)
+        self.var = tk.StringVar()
+        self.lbl = tk.Label(self, textvariable=self.var, bg=bg, fg=T.TEXT,
+                            font=T.FONT_MONO, width=9, anchor="e")
+        self.lbl.pack(side="left", padx=(10, 0))
+
+        self.cv.bind("<Configure>", lambda e: self._draw())
+        self.cv.bind("<Button-1>", self._on_drag)
+        self.cv.bind("<B1-Motion>", self._on_drag)
+        self.cv.bind("<Enter>", self._on_hot)
+        self.cv.bind("<Leave>", self._on_cold)
+        self._sync_label()
+
+    def _on_hot(self, _=None):
+        self._hot = True
+        self._draw()
+
+    def _on_cold(self, _=None):
+        self._hot = False
+        self._draw()
+
+    def _sync_label(self):
+        txt = f"{self._value:.{self.decimals}f}"
+        self.var.set(f"{txt} {self.suffix}".strip())
+
+    def _draw(self):
+        w = self.cv.winfo_width()
+        if w <= 1:
+            return
+        pad, y = 10, 13
+        self.cv.delete("all")
+        self.cv.create_line(pad, y, w - pad, y, fill="#2a3346", width=6, capstyle="round")
+        span = (self.to - self.from_) or 1.0
+        frac = clamp((self._value - self.from_) / span, 0.0, 1.0)
+        x = pad + frac * (w - 2 * pad)
+        if x > pad:
+            self.cv.create_line(pad, y, x, y, fill=T.ACCENT, width=6, capstyle="round")
+        r = 9 if self._hot else 7
+        self.cv.create_oval(x - r, y - r, x + r, y + r, fill="#ffffff", outline=T.ACCENT, width=2)
+
+    def _on_drag(self, event):
+        w = self.cv.winfo_width()
+        pad = 10
+        frac = clamp((event.x - pad) / max(1, (w - 2 * pad)), 0.0, 1.0)
+        self._value = self.from_ + frac * (self.to - self.from_)
+        if self.decimals == 0:
+            self._value = round(self._value)
+        self._sync_label()
+        self._draw()
+        if self._command:
+            self._command(self._value)
+
+    def get(self):
+        return self._value
+
+    def set(self, value):
+        self._value = clamp(float(value), self.from_, self.to)
+        self._sync_label()
+        self._draw()
+
+
+class Stepper(tk.Frame):
+    """Campo numérico compacto com botões − / +."""
+
+    def __init__(self, master, from_=0, to=100, value=0, step=1, bg=T.SURFACE, width=4):
+        super().__init__(master, bg=bg)
+        self.from_, self.to, self.step = int(from_), int(to), int(step)
+        self._value = int(clamp(value, from_, to))
+
+        box = tk.Frame(self, bg=T.SURFACE_2, highlightthickness=1, highlightbackground=T.BORDER)
+        box.pack(side="left")
+        self._mk_btn(box, "−", -1).pack(side="left")
+        self.lbl = tk.Label(box, text=str(self._value), bg=T.SURFACE_2, fg=T.TEXT,
+                            font=T.FONT_MONO, width=width)
+        self.lbl.pack(side="left", pady=5)
+        self._mk_btn(box, "+", +1).pack(side="left")
+
+    def _mk_btn(self, parent, text, direction):
+        b = tk.Label(parent, text=text, bg=T.SURFACE_2, fg=T.TEXT_DIM,
+                     font=T.FONT_BOLD, width=3, pady=4, cursor="hand2")
+        b.bind("<Enter>", lambda e: b.configure(bg=T.HOVER, fg=T.TEXT))
+        b.bind("<Leave>", lambda e: b.configure(bg=T.SURFACE_2, fg=T.TEXT_DIM))
+        b.bind("<Button-1>", lambda e: self._bump(direction))
+        return b
+
+    def _bump(self, direction):
+        self._value = int(clamp(self._value + direction * self.step, self.from_, self.to))
+        self.lbl.configure(text=str(self._value))
+
+    def get(self):
+        return self._value
+
+    def set(self, value):
+        self._value = int(clamp(value, self.from_, self.to))
+        self.lbl.configure(text=str(self._value))
+
+
+class Segmented(tk.Frame):
+    """Grupo de opções mutuamente exclusivas (substitui radiobuttons)."""
+
+    def __init__(self, master, options, value=None, bg=T.SURFACE, command=None):
+        super().__init__(master, bg=T.SURFACE_2, highlightthickness=1, highlightbackground=T.BORDER)
+        self._command = command
+        self._items = {}
+        self._value = value if value is not None else options[0][1]
+        for text, val in options:
+            lbl = tk.Label(self, text=text, bg=T.SURFACE_2, fg=T.TEXT_DIM,
+                           font=T.FONT, padx=14, pady=6, cursor="hand2")
+            lbl.pack(side="left", padx=2, pady=2)
+            lbl.bind("<Button-1>", lambda e, v=val: self.set(v, notify=True))
+            lbl.bind("<Enter>", lambda e, v=val, w=lbl: w.configure(fg=T.TEXT) if self._value != v else None)
+            lbl.bind("<Leave>", lambda e, v=val, w=lbl: w.configure(fg=T.TEXT_DIM) if self._value != v else None)
+            self._items[val] = lbl
+        self._paint()
+
+    def _paint(self):
+        for val, lbl in self._items.items():
+            if val == self._value:
+                lbl.configure(bg=T.ACCENT, fg="#ffffff", font=T.FONT_BOLD)
+            else:
+                lbl.configure(bg=T.SURFACE_2, fg=T.TEXT_DIM, font=T.FONT)
+
+    def get(self):
+        return self._value
+
+    def set(self, value, notify=False):
+        self._value = value
+        self._paint()
+        if notify and self._command:
+            self._command(value)
+
+
+class ModeSelector(tk.Frame):
+    """Cartões grandes e clicáveis para escolher o modo de jogo."""
+
+    def __init__(self, master, options, value, bg=T.SURFACE, command=None):
+        super().__init__(master, bg=bg)
+        self._command = command
+        self._value = value
+        self._cards = {}
+        for i, (titulo, desc, val) in enumerate(options):
+            card = tk.Frame(self, bg=T.SURFACE_2, highlightthickness=2, highlightbackground=T.BORDER, cursor="hand2")
+            card.grid(row=i // 2, column=i % 2, sticky="nsew", padx=5, pady=5)
+            dot = tk.Canvas(card, width=14, height=14, bg=T.SURFACE_2, highlightthickness=0)
+            dot.grid(row=0, column=0, rowspan=2, padx=(14, 10), pady=14, sticky="n")
+            t = tk.Label(card, text=titulo, bg=T.SURFACE_2, fg=T.TEXT, font=T.FONT_H2, anchor="w")
+            t.grid(row=0, column=1, sticky="w", pady=(13, 0), padx=(0, 14))
+            d = tk.Label(card, text=desc, bg=T.SURFACE_2, fg=T.TEXT_MUTE, font=T.FONT_SM, anchor="w")
+            d.grid(row=1, column=1, sticky="w", pady=(1, 13), padx=(0, 14))
+            card.columnconfigure(1, weight=1)
+            self._cards[val] = (card, dot, t, d)
+            for w in (card, dot, t, d):
+                w.bind("<Button-1>", lambda e, v=val: self.set(v, notify=True))
+        self.columnconfigure(0, weight=1)
+        self.columnconfigure(1, weight=1)
+        self._paint()
+
+    def _paint(self):
+        for val, (card, dot, t, d) in self._cards.items():
+            sel = (val == self._value)
+            bg = T.HOVER if sel else T.SURFACE_2
+            card.configure(highlightbackground=T.ACCENT if sel else T.BORDER, bg=bg)
+            for w in (t, d):
+                w.configure(bg=bg)
+            t.configure(fg=T.TEXT if sel else T.TEXT_DIM)
+            dot.configure(bg=bg)
+            dot.delete("all")
+            dot.create_oval(1, 1, 13, 13, outline=T.ACCENT if sel else "#3a4459", width=2)
+            if sel:
+                dot.create_oval(4, 4, 10, 10, fill=T.ACCENT, outline="")
+
+    def get(self):
+        return self._value
+
+    def set(self, value, notify=False):
+        self._value = value
+        self._paint()
+        if notify and self._command:
+            self._command(value)
+
+
+class StatCard(tk.Frame):
+    """Cartão com número grande + legenda."""
+
+    def __init__(self, master, caption, value="0", color=T.ACCENT, bg=T.BG):
+        super().__init__(master, bg=T.SURFACE, highlightthickness=1, highlightbackground=T.BORDER)
+        tk.Frame(self, bg=color, height=3).pack(fill="x")
+        inner = tk.Frame(self, bg=T.SURFACE)
+        inner.pack(fill="both", expand=True, padx=16, pady=(12, 14))
+        self.val = tk.Label(inner, text=value, bg=T.SURFACE, fg=T.TEXT, font=T.FONT_BIG, anchor="w")
+        self.val.pack(anchor="w")
+        tk.Label(inner, text=caption.upper(), bg=T.SURFACE, fg=T.TEXT_MUTE,
+                 font=("Segoe UI", 8, "bold"), anchor="w").pack(anchor="w", pady=(2, 0))
+
+    def set(self, value):
+        self.val.configure(text=str(value))
+
+
+class ScrollArea(tk.Frame):
+    """Área rolável com scroll pelo mouse."""
+
+    def __init__(self, master, bg=T.BG):
+        super().__init__(master, bg=bg)
+        self.canvas = tk.Canvas(self, bg=bg, highlightthickness=0)
+        self.sb = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview, style="Dark.Vertical.TScrollbar")
+        self.body = tk.Frame(self.canvas, bg=bg)
+        self._win = self.canvas.create_window((0, 0), window=self.body, anchor="nw")
+        self.canvas.configure(yscrollcommand=self.sb.set)
+        self.canvas.pack(side="left", fill="both", expand=True)
+        self.sb.pack(side="right", fill="y")
+
+        self.body.bind("<Configure>", lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
+        self.canvas.bind("<Configure>", lambda e: self.canvas.itemconfigure(self._win, width=e.width))
+
+    def _wheel(self, event):
+        self.canvas.yview_scroll(int(-event.delta / 120), "units")
+
+    def activate(self):
+        """Liga a roda do mouse enquanto esta página estiver visível."""
+        self.canvas.bind_all("<MouseWheel>", self._wheel)
+
+    def deactivate(self):
+        self.canvas.unbind_all("<MouseWheel>")
+
+
+def make_card(parent, title=None, subtitle=None, bg=T.BG, pad=16):
+    """Cria um cartão com cabeçalho opcional. Retorna (container, corpo)."""
+    outer = tk.Frame(parent, bg=T.SURFACE, highlightthickness=1, highlightbackground=T.BORDER)
+    if title:
+        head = tk.Frame(outer, bg=T.SURFACE)
+        head.pack(fill="x", padx=pad, pady=(pad, 0))
+        tk.Label(head, text=title, bg=T.SURFACE, fg=T.TEXT, font=T.FONT_H2).pack(anchor="w")
+        if subtitle:
+            tk.Label(head, text=subtitle, bg=T.SURFACE, fg=T.TEXT_MUTE,
+                     font=T.FONT_SM, justify="left").pack(anchor="w", pady=(3, 0))
+    body = tk.Frame(outer, bg=T.SURFACE)
+    body.pack(fill="both", expand=True, padx=pad, pady=(12 if title else pad, pad))
+    return outer, body
+
+
+def form_row(parent, label, hint=None, bg=T.SURFACE, label_px=280):
+    """Linha de formulário: rótulo (+ dica) à esquerda, widget à direita.
+
+    Usa grid com coluna esquerda de largura fixa para que todos os controles
+    de um cartão fiquem alinhados verticalmente.
+    """
+    r = tk.Frame(parent, bg=bg)
+    r.pack(fill="x", pady=6)
+    left = tk.Frame(r, bg=bg)
+    left.grid(row=0, column=0, sticky="w")
+    tk.Label(left, text=label, bg=bg, fg=T.TEXT, font=T.FONT,
+             anchor="w", justify="left").pack(anchor="w")
+    if hint:
+        tk.Label(left, text=hint, bg=bg, fg=T.TEXT_MUTE, font=T.FONT_SM, anchor="w",
+                 justify="left", wraplength=label_px - 20).pack(anchor="w", pady=(1, 0))
+    right = tk.Frame(r, bg=bg)
+    right.grid(row=0, column=1, sticky="ew", padx=(14, 0))
+    r.columnconfigure(0, minsize=label_px)
+    r.columnconfigure(1, weight=1)
+    return right
+
+
+def dark_entry(parent, value="", width=40):
+    e = tk.Entry(parent, bg=T.SURFACE_2, fg=T.TEXT, font=T.FONT, width=width,
+                 relief="flat", insertbackground=T.ACCENT, highlightthickness=1,
+                 highlightbackground=T.BORDER, highlightcolor=T.ACCENT)
+    e.insert(0, value)
+    e.configure(disabledbackground=T.SURFACE_2)
+    return e
+
+
+# ------------------------------
+# Aplicação
+# ------------------------------
+
 class AppUI:
+    NAV = [
+        ("principal", "▶", "Principal"),
+        ("console",   "▤", "Console"),
+        ("setup",     "⚙", "Setup"),
+        ("humano",    "✎", "Humanização"),
+        ("stats",     "▦", "Estatísticas"),
+    ]
+
     def __init__(self):
         self.cfg_mgr = ConfigManager()
         self.cfg_mgr.load()
-
         self.pos_mgr = PosicoesManager()
         self.pos_mgr.load()
 
         self.root = tk.Tk()
         self.root.title(APP_NAME)
-        self.root.geometry("980x960")
+        self.root.configure(bg=T.BG)
+        self.root.minsize(980, 640)
+        self._center(1160, 780)
         self.root.attributes("-topmost", True)
 
-        # Estilo
-        self.style = ttk.Style(self.root)
-        if "vista" in self.style.theme_names():
-            self.style.theme_use("vista")
+        self._init_style()
 
-        # Bot
-        self.bot = BotCore(self.cfg_mgr.config, self.pos_mgr, self.append_terminal)
+        # Fila de logs (mantém as chamadas do bot fora da thread da UI)
+        self._log_queue = queue.Queue()
+        self._capture_listener = None
+        self._capture_hint = None
 
-        # Menus / Tabs
-        self._build_menubar()
-        self._build_tabs()
+        self.bot = BotCore(self.cfg_mgr.config, self.pos_mgr, self.enqueue_log)
 
-        # F8 -> Parar (kill switch global)
+        self._build_layout()
+        self._show_page("principal")
+
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+        self.root.bind("<Control-s>", lambda e: self._salvar_config())
+        self.root.bind("<F8>", lambda e: self._handle_kill_switch())
+
         threading.Thread(target=self._monitor_f8, daemon=True).start()
+        self._drain_logs()
+        self._refresh_stats()
 
-        # Labels arco-íris (estéticas)
-        self._apply_dev_label(self.tabs['Principal'])
-        self._apply_dev_label(self.tabs['Terminal'])
-        self._apply_dev_label(self.tabs['Setup'])
-        self._apply_dev_label(self.tabs['Estatísticas'])
-        self._apply_dev_label(self.tabs['Erros/Humano'])
-
-        self.append_terminal("Posições e configurações carregadas.")
-
+        self.enqueue_log("Configurações e posições carregadas.")
+        threading.Thread(target=self._preload_dicionario, daemon=True).start()
         self.root.mainloop()
 
-    # ---------- Menus ----------
-    def _build_menubar(self):
-        menubar = Menu(self.root)
-        self.root.config(menu=menubar)
+    def _preload_dicionario(self):
+        """Carrega o dicionário logo na abertura para já mostrar o total e avisar de erros."""
+        try:
+            self.bot.carregar_dict_e_blacklist()
+        except Exception as e:
+            self.enqueue_log(f"Falha ao carregar dicionário: {e}")
 
-        m_arquivo = Menu(menubar, tearoff=0)
-        m_arquivo.add_command(label="Salvar Configurações", command=self._salvar_config)
-        m_arquivo.add_command(label="Recarregar Dicionário", command=self._recarregar_dicionario)
-        m_arquivo.add_command(label="Salvar Posições", command=self._salvar_posicoes)
-        m_arquivo.add_separator()
-        m_arquivo.add_command(label="Sair", command=self.root.destroy)
+    def _center(self, w, h):
+        sw, sh = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
+        w = min(w, sw - 80)
+        h = min(h, sh - 120)
+        x, y = int((sw - w) / 2), int((sh - h) / 2.4)
+        self.root.geometry(f"{w}x{h}+{max(0, x)}+{max(0, y)}")
 
-        m_ver = Menu(menubar, tearoff=0)
-        self.var_topmost = tk.BooleanVar(value=True)
-        m_ver.add_checkbutton(label="Sempre no topo", onvalue=True, offvalue=False, variable=self.var_topmost, command=self._toggle_topmost)
+    def _init_style(self):
+        self.style = ttk.Style(self.root)
+        self.style.theme_use("clam")
+        self.style.configure("Dark.Vertical.TScrollbar",
+                             background=T.SURFACE_2, troughcolor=T.BG, bordercolor=T.BG,
+                             arrowcolor=T.TEXT_MUTE, darkcolor=T.SURFACE_2, lightcolor=T.SURFACE_2,
+                             relief="flat", width=10)
+        self.style.map("Dark.Vertical.TScrollbar", background=[("active", T.HOVER)])
 
-        menubar.add_cascade(label="Arquivo", menu=m_arquivo)
-        menubar.add_cascade(label="Janela", menu=m_ver)
+    # ---------- Layout base ----------
+    def _build_layout(self):
+        self._build_sidebar()
 
-    # ---------- Tabs ----------
-    def _build_tabs(self):
-        self.tabs = {}
-        self.nb = ttk.Notebook(self.root)
-        self.nb.pack(expand=1, fill='both', padx=6, pady=6)
+        main = tk.Frame(self.root, bg=T.BG)
+        main.pack(side="left", fill="both", expand=True)
 
-        self.tabs['Principal'] = ttk.Frame(self.nb); self.nb.add(self.tabs['Principal'], text="Principal")
-        self._build_tab_principal(self.tabs['Principal'])
+        self._build_topbar(main)
+        # a barra de status é empacotada antes do conteúdo para não ser espremida
+        self._build_statusbar(main)
 
-        self.tabs['Terminal'] = ttk.Frame(self.nb); self.nb.add(self.tabs['Terminal'], text="Terminal")
-        self._build_tab_terminal(self.tabs['Terminal'])
+        self.content = tk.Frame(main, bg=T.BG)
+        self.content.pack(fill="both", expand=True)
 
-        self.tabs['Setup'] = ttk.Frame(self.nb); self.nb.add(self.tabs['Setup'], text="Setup")
-        self._build_tab_setup(self.tabs['Setup'])
+        self.pages = {}
+        self.pages["principal"] = self._build_page_principal(self.content)
+        self.pages["console"] = self._build_page_console(self.content)
+        self.pages["setup"] = self._build_page_setup(self.content)
+        self.pages["humano"] = self._build_page_humano(self.content)
+        self.pages["stats"] = self._build_page_stats(self.content)
 
-        self.tabs['Estatísticas'] = ttk.Frame(self.nb); self.nb.add(self.tabs['Estatísticas'], text="Estatísticas")
-        self._build_tab_stats(self.tabs['Estatísticas'])
+    def _build_sidebar(self):
+        sb = tk.Frame(self.root, bg=T.SIDEBAR, width=212)
+        sb.pack(side="left", fill="y")
+        sb.pack_propagate(False)
 
-        self.tabs['Erros/Humano'] = ttk.Frame(self.nb); self.nb.add(self.tabs['Erros/Humano'], text="Erros/Humano")
-        self._build_tab_human(self.tabs['Erros/Humano'])
+        brand = tk.Frame(sb, bg=T.SIDEBAR)
+        brand.pack(fill="x", padx=20, pady=(24, 26))
+        logo = tk.Canvas(brand, width=34, height=34, bg=T.SIDEBAR, highlightthickness=0)
+        logo.pack(side="left")
+        logo.create_oval(1, 1, 33, 33, fill=T.ACCENT, outline="")
+        logo.create_text(17, 18, text="B", fill="#ffffff", font=("Segoe UI Semibold", 15))
+        txt = tk.Frame(brand, bg=T.SIDEBAR)
+        txt.pack(side="left", padx=(10, 0))
+        tk.Label(txt, text="Bombinha", bg=T.SIDEBAR, fg=T.TEXT, font=T.FONT_H1).pack(anchor="w")
+        tk.Label(txt, text="JKLM.fun PT-BR", bg=T.SIDEBAR, fg=T.TEXT_MUTE, font=T.FONT_SM).pack(anchor="w")
 
-    def _build_tab_principal(self, parent):
-        f = ttk.Frame(parent)
-        f.pack(pady=10)
+        self.nav_items = {}
+        for key, icon, label in self.NAV:
+            row = tk.Frame(sb, bg=T.SIDEBAR, cursor="hand2")
+            row.pack(fill="x", padx=12, pady=2)
+            bar = tk.Frame(row, bg=T.SIDEBAR, width=3)
+            bar.pack(side="left", fill="y")
+            ic = tk.Label(row, text=icon, bg=T.SIDEBAR, fg=T.TEXT_MUTE, font=("Segoe UI", 11), width=3)
+            ic.pack(side="left", pady=9)
+            lb = tk.Label(row, text=label, bg=T.SIDEBAR, fg=T.TEXT_DIM, font=T.FONT, anchor="w")
+            lb.pack(side="left", fill="x", expand=True)
+            for w in (row, ic, lb):
+                w.bind("<Button-1>", lambda e, k=key: self._show_page(k))
+                w.bind("<Enter>", lambda e, k=key: self._nav_hover(k, True))
+                w.bind("<Leave>", lambda e, k=key: self._nav_hover(k, False))
+            self.nav_items[key] = (row, bar, ic, lb)
 
-        ttk.Label(f, text="Modo de Jogo:", font=('Arial', 14, 'bold')).grid(row=0, column=0, columnspan=4, pady=6)
-        self.modo_var = tk.StringVar(value=self.cfg_mgr.config.modo)
-        for i, (texto, val) in enumerate([("Palavras Longas", Modo.LONGA.value),
-                                          ("Palavras Curtas", Modo.CURTA.value),
-                                          ("Qualquer Palavra", Modo.QUALQUER.value),
-                                          ("Modo Alfabeto (23 letras)", Modo.ALFABETO.value)]):
-            ttk.Radiobutton(f, text=texto, variable=self.modo_var, value=val, command=self._on_modo).grid(row=1 + i // 2, column=i % 2, padx=8, pady=4, sticky="w")
+        footer = tk.Frame(sb, bg=T.SIDEBAR)
+        footer.pack(side="bottom", fill="x", padx=20, pady=18)
+        tk.Frame(footer, bg=T.BORDER, height=1).pack(fill="x", pady=(0, 12))
+        tk.Label(footer, text="F8  ·  parar tudo", bg=T.SIDEBAR, fg=T.TEXT_MUTE, font=T.FONT_SM).pack(anchor="w")
+        tk.Label(footer, text="Ctrl+S  ·  salvar", bg=T.SIDEBAR, fg=T.TEXT_MUTE, font=T.FONT_SM).pack(anchor="w")
+        self.lbl_dev = tk.Label(footer, text="dev @lucasleao18", bg=T.SIDEBAR, fg=T.ACCENT, font=T.FONT_SM)
+        self.lbl_dev.pack(anchor="w", pady=(10, 0))
 
-        g = ttk.Frame(parent); g.pack(pady=10)
-        self.btn_iniciar = ttk.Button(g, text="Iniciar", command=self._iniciar, width=30)
-        self.btn_parar = ttk.Button(g, text="Parar (F8)", command=self._parar, width=30)
-        self.btn_iniciar.grid(row=0, column=0, padx=6, pady=6)
-        self.btn_parar.grid(row=0, column=1, padx=6, pady=6)
+    def _nav_hover(self, key, entering):
+        if getattr(self, "_page_atual", None) == key:
+            return
+        row, bar, ic, lb = self.nav_items[key]
+        bg = T.SURFACE if entering else T.SIDEBAR
+        for w in (row, ic, lb):
+            w.configure(bg=bg)
+        bar.configure(bg=bg)
+        lb.configure(fg=T.TEXT if entering else T.TEXT_DIM)
 
-        s = ttk.Frame(parent); s.pack(pady=6, fill='x')
-        self.lbl_status = ttk.Label(s, text="Status: Parado", foreground="red", font=('Arial', 12, 'bold'))
-        self.lbl_status.pack(side='left', padx=6)
+    def _build_topbar(self, parent):
+        bar = tk.Frame(parent, bg=T.BG)
+        bar.pack(fill="x", padx=28, pady=(22, 8))
 
-    def _build_tab_terminal(self, parent):
-        self.terminal = scrolledtext.ScrolledText(parent, state=tk.DISABLED, wrap=tk.WORD)
-        self.terminal.pack(expand=1, fill='both', padx=6, pady=6)
+        left = tk.Frame(bar, bg=T.BG)
+        left.pack(side="left")
+        self.lbl_page = tk.Label(left, text="Principal", bg=T.BG, fg=T.TEXT, font=T.FONT_H1)
+        self.lbl_page.pack(anchor="w")
+        self.lbl_page_sub = tk.Label(left, text="Escolha o modo e inicie a automação",
+                                     bg=T.BG, fg=T.TEXT_MUTE, font=T.FONT_SM)
+        self.lbl_page_sub.pack(anchor="w", pady=(2, 0))
 
-    def _build_tab_setup(self, parent):
+        right = tk.Frame(bar, bg=T.BG)
+        right.pack(side="right")
+
+        self.pill = tk.Frame(right, bg=T.SURFACE, highlightthickness=1, highlightbackground=T.BORDER)
+        self.pill.pack(side="left", padx=(0, 12))
+        self.pill_dot = tk.Canvas(self.pill, width=10, height=10, bg=T.SURFACE, highlightthickness=0)
+        self.pill_dot.pack(side="left", padx=(12, 0), pady=9)
+        self.pill_txt = tk.Label(self.pill, text="Parado", bg=T.SURFACE, fg=T.DANGER, font=T.FONT_BOLD)
+        self.pill_txt.pack(side="left", padx=(8, 14))
+        self._paint_pill(False)
+
+        self.tgl_top = Toggle(right, text="Sempre no topo", value=True, bg=T.BG, command=self._toggle_topmost)
+        self.tgl_top.pack(side="left")
+
+    def _paint_pill(self, rodando):
+        cor = T.SUCCESS if rodando else T.DANGER
+        self.pill_txt.configure(text="Rodando" if rodando else "Parado", fg=cor)
+        self.pill_dot.delete("all")
+        self.pill_dot.create_oval(1, 1, 9, 9, fill=cor, outline="")
+
+    def _build_statusbar(self, parent):
+        bar = tk.Frame(parent, bg=T.SIDEBAR, height=30)
+        bar.pack(fill="x", side="bottom")
+        bar.pack_propagate(False)
+        self.lbl_status_msg = tk.Label(bar, text="Pronto.", bg=T.SIDEBAR, fg=T.TEXT_MUTE, font=T.FONT_SM)
+        self.lbl_status_msg.pack(side="left", padx=18)
+        self.lbl_status_right = tk.Label(bar, text="", bg=T.SIDEBAR, fg=T.TEXT_MUTE, font=T.FONT_SM)
+        self.lbl_status_right.pack(side="right", padx=18)
+
+    def _show_page(self, key):
+        for page in self.pages.values():
+            if isinstance(page, ScrollArea):
+                page.deactivate()
+            page.pack_forget()
+        alvo = self.pages[key]
+        alvo.pack(fill="both", expand=True, padx=28, pady=(10, 18))
+        if isinstance(alvo, ScrollArea):
+            alvo.activate()
+        if key == "stats":
+            self._refresh_historico()
+        self._page_atual = key
+
+        titulos = {
+            "principal": ("Principal", "Escolha o modo e inicie a automação"),
+            "console":   ("Console", "Acompanhe cada decisão do bot em tempo real"),
+            "setup":     ("Setup", "Dicionário, posições de tela e delays"),
+            "humano":    ("Humanização", "Perfil de digitação e comportamentos humanos"),
+            "stats":     ("Estatísticas", "Desempenho da sessão e histórico de palavras"),
+        }
+        self.lbl_page.configure(text=titulos[key][0])
+        self.lbl_page_sub.configure(text=titulos[key][1])
+
+        for k, (row, bar, ic, lb) in self.nav_items.items():
+            sel = (k == key)
+            bg = T.SURFACE if sel else T.SIDEBAR
+            for w in (row, ic, lb):
+                w.configure(bg=bg)
+            bar.configure(bg=T.ACCENT if sel else bg)
+            ic.configure(fg=T.ACCENT if sel else T.TEXT_MUTE)
+            lb.configure(fg=T.TEXT if sel else T.TEXT_DIM, font=T.FONT_BOLD if sel else T.FONT)
+
+    # ---------- Página: Principal ----------
+    def _build_page_principal(self, parent):
+        page = ScrollArea(parent, bg=T.BG)
+
+        cols = tk.Frame(page.body, bg=T.BG)
+        cols.pack(fill="both", expand=True)
+        left = tk.Frame(cols, bg=T.BG)
+        right = tk.Frame(cols, bg=T.BG)
+        left.grid(row=0, column=0, sticky="nsew")
+        right.grid(row=0, column=1, sticky="new", padx=(18, 0))
+        cols.columnconfigure(0, weight=1)
+        cols.columnconfigure(1, minsize=320)
+
+        card, body = make_card(left, "Modo de jogo", "Define como as palavras são escolhidas no dicionário")
+        card.pack(fill="x")
+        self.modo_sel = ModeSelector(body, [
+            ("Palavras Longas", "Prioriza tamanho máximo", Modo.LONGA.value),
+            ("Palavras Curtas", "Mais rápido de digitar", Modo.CURTA.value),
+            ("Qualquer Palavra", "Equilíbrio entre as opções", Modo.QUALQUER.value),
+            ("Modo Alfabeto", "Cobre as 23 letras úteis", Modo.ALFABETO.value),
+        ], value=self.cfg_mgr.config.modo, command=self._on_modo)
+        self.modo_sel.pack(fill="x")
+
+        ctrl, cbody = make_card(left, "Controle")
+        ctrl.pack(fill="x", pady=(18, 0))
+        btns = tk.Frame(cbody, bg=T.SURFACE)
+        btns.pack(fill="x")
+        self.btn_iniciar = Btn(btns, "Iniciar", command=self._iniciar, variant="success", icon="▶", padx=34, pady=11)
+        self.btn_iniciar.pack(side="left")
+        self.btn_parar = Btn(btns, "Parar  (F8)", command=self._parar, variant="danger", icon="■", padx=30, pady=11)
+        self.btn_parar.pack(side="left", padx=10)
+        self.btn_parar.set_enabled(False)
+        Btn(btns, "Recarregar dicionário", command=self._recarregar_dicionario, variant="ghost", icon="⟳",
+            padx=18, pady=11).pack(side="left")
+
+        tk.Label(cbody, text="Deixe a janela do jogo em foco antes de iniciar. F8 interrompe de qualquer lugar.",
+                 bg=T.SURFACE, fg=T.TEXT_MUTE, font=T.FONT_SM).pack(anchor="w", pady=(12, 0))
+
+        live, lbody = make_card(left, "Rodada atual")
+        live.pack(fill="x", pady=(18, 0))
+        self.live_letras = self._live_row(lbody, "Letras detectadas", "—", T.PURPLE)
+        self.live_palavra = self._live_row(lbody, "Palavra escolhida", "—", T.ACCENT)
+        self.live_evento = self._live_row(lbody, "Último evento", "aguardando…", T.TEXT_DIM)
+
+        # coluna direita – mini estatísticas
+        self.card_palavras = StatCard(right, "palavras enviadas", "0", T.ACCENT)
+        self.card_palavras.pack(fill="x")
+        self.card_sequencia = StatCard(right, "acertos consecutivos", "0", T.SUCCESS)
+        self.card_sequencia.pack(fill="x", pady=(14, 0))
+        self.card_dict = StatCard(right, "palavras no dicionário", "0", T.PURPLE)
+        self.card_dict.pack(fill="x", pady=(14, 0))
+
+        tip, tbody = make_card(right, "Dica")
+        tip.pack(fill="x", pady=(14, 0))
+        tk.Label(tbody, text="Se o bot enviar em turnos alheios, aumente o threshold da barra "
+                             "de turno no Setup. Falsos negativos? Reduza um pouco.",
+                 bg=T.SURFACE, fg=T.TEXT_DIM, font=T.FONT_SM, wraplength=250, justify="left").pack(anchor="w")
+        return page
+
+    def _live_row(self, parent, label, value, color):
+        r = tk.Frame(parent, bg=T.SURFACE)
+        r.pack(fill="x", pady=6)
+        tk.Frame(r, bg=color, width=3, height=34).pack(side="left", padx=(0, 12))
+        box = tk.Frame(r, bg=T.SURFACE)
+        box.pack(side="left", fill="x", expand=True)
+        tk.Label(box, text=label.upper(), bg=T.SURFACE, fg=T.TEXT_MUTE,
+                 font=("Segoe UI", 8, "bold")).pack(anchor="w")
+        val = tk.Label(box, text=value, bg=T.SURFACE, fg=T.TEXT, font=T.FONT_H2, anchor="w")
+        val.pack(anchor="w")
+        return val
+
+    # ---------- Página: Console ----------
+    def _build_page_console(self, parent):
+        page = tk.Frame(parent, bg=T.BG)
+
+        tools = tk.Frame(page, bg=T.BG)
+        tools.pack(fill="x", pady=(0, 12))
+        Btn(tools, "Limpar", command=self._limpar_terminal, variant="ghost", icon="✕", padx=14, pady=7).pack(side="left")
+        Btn(tools, "Copiar tudo", command=self._copiar_terminal, variant="ghost", icon="⧉", padx=14, pady=7).pack(side="left", padx=8)
+        self.tgl_autoscroll = Toggle(tools, text="Rolagem automática", value=True, bg=T.BG)
+        self.tgl_autoscroll.pack(side="right")
+
+        wrap = tk.Frame(page, bg=T.SURFACE, highlightthickness=1, highlightbackground=T.BORDER)
+        wrap.pack(fill="both", expand=True)
+        self.terminal = tk.Text(wrap, bg="#0a0d14", fg=T.TEXT, font=T.FONT_MONO, wrap="word",
+                                relief="flat", padx=16, pady=12, state=tk.DISABLED,
+                                insertbackground=T.ACCENT, selectbackground=T.HOVER, spacing1=1, spacing3=2)
+        sb = ttk.Scrollbar(wrap, orient="vertical", command=self.terminal.yview, style="Dark.Vertical.TScrollbar")
+        self.terminal.configure(yscrollcommand=sb.set)
+        self.terminal.pack(side="left", fill="both", expand=True)
+        sb.pack(side="right", fill="y")
+
+        self.terminal.tag_config("time", foreground=T.TEXT_MUTE)
+        self.terminal.tag_config("info", foreground=T.TEXT_DIM)
+        self.terminal.tag_config("ok", foreground=T.SUCCESS)
+        self.terminal.tag_config("warn", foreground=T.WARN)
+        self.terminal.tag_config("err", foreground=T.DANGER)
+        self.terminal.tag_config("accent", foreground=T.ACCENT)
+        return page
+
+    # ---------- Página: Setup ----------
+    def _build_page_setup(self, parent):
         cfg = self.cfg_mgr.config
+        page = ScrollArea(parent, bg=T.BG)
+        body = page.body
 
-        frm = ttk.Frame(parent); frm.pack(padx=8, pady=8, fill='x')
+        # --- Dicionário ---
+        card, b = make_card(body, "Dicionário e detecção", "Fontes de palavras e reconhecimento de tela")
+        card.pack(fill="x")
 
-        ttk.Label(frm, text="Caminho do Dicionário:").grid(row=0, column=0, sticky='w')
-        self.ent_dict = ttk.Entry(frm, width=60); self.ent_dict.insert(0, cfg.caminho_dicionario)
-        self.ent_dict.grid(row=0, column=1, padx=6)
-        ttk.Button(frm, text="Abrir…", command=self._browse_dict).grid(row=0, column=2, padx=4)
+        r = form_row(b, "Caminho do dicionário", "Arquivo .txt com uma palavra por linha")
+        self.ent_dict = dark_entry(r, cfg.caminho_dicionario)
+        self.ent_dict.pack(side="left", fill="x", expand=True, ipady=5, padx=(0, 8))
+        Btn(r, "Abrir", command=self._browse_dict, variant="ghost", padx=14, pady=5).pack(side="left")
 
-        ttk.Label(frm, text="Template Chatbox (opcional):").grid(row=1, column=0, sticky='w', pady=4)
-        self.ent_tpl = ttk.Entry(frm, width=60); self.ent_tpl.insert(0, cfg.template_chatbox)
-        self.ent_tpl.grid(row=1, column=1, padx=6)
-        ttk.Button(frm, text="Abrir…", command=self._browse_tpl).grid(row=1, column=2, padx=4)
+        r = form_row(b, "Template da chatbox", "Imagem .png usada para localizar o campo (opcional)")
+        self.ent_tpl = dark_entry(r, cfg.template_chatbox)
+        self.ent_tpl.pack(side="left", fill="x", expand=True, ipady=5, padx=(0, 8))
+        Btn(r, "Abrir", command=self._browse_tpl, variant="ghost", padx=14, pady=5).pack(side="left")
 
-        ttk.Label(frm, text="Threshold Template (0-1):").grid(row=2, column=0, sticky='w')
-        self.spn_thr = ttk.Spinbox(frm, from_=0.5, to=0.99, increment=0.01, width=6)
-        self.spn_thr.delete(0, tk.END); self.spn_thr.insert(0, str(cfg.template_threshold))
-        self.spn_thr.grid(row=2, column=1, sticky='w')
+        r = form_row(b, "Threshold do template", "Maior = mais rígido para achar a chatbox")
+        self.sld_thr = Slider(r, 0.50, 0.99, cfg.template_threshold, decimals=2)
+        self.sld_thr.pack(fill="x")
 
-        ttk.Label(frm, text="Threshold Barra de Turno (0-1):").grid(row=3, column=0, sticky='w')
-        self.spn_turn_thr = ttk.Spinbox(frm, from_=0.5, to=0.99, increment=0.01, width=6)
-        self.spn_turn_thr.delete(0, tk.END); self.spn_turn_thr.insert(0, str(cfg.turn_bar_threshold))
-        self.spn_turn_thr.grid(row=3, column=1, sticky='w')
+        r = form_row(b, "Threshold da barra de turno", "Maior = evita enviar no turno dos outros")
+        self.sld_turn_thr = Slider(r, 0.50, 0.99, cfg.turn_bar_threshold, decimals=2)
+        self.sld_turn_thr.pack(fill="x")
 
-        ttk.Separator(parent, orient='horizontal').pack(fill='x', padx=8, pady=8)
+        # --- Posições ---
+        card, b = make_card(body, "Posições na tela",
+                            "Clique em «Capturar» e depois no ponto correspondente dentro do jogo")
+        card.pack(fill="x", pady=(18, 0))
 
-        posf = ttk.Frame(parent); posf.pack(padx=8, pady=8, fill='x')
-        ttk.Label(posf, text=f"Posição Letras: {self.pos_mgr.pos_letras}").grid(row=0, column=0, sticky='w', padx=4)
-        ttk.Button(posf, text="Atualizar (clique na tela)", command=self._capturar_pos_letras).grid(row=0, column=1, padx=6)
-        ttk.Label(posf, text=f"Posição Chatbox: {self.pos_mgr.pos_chatbox}").grid(row=1, column=0, sticky='w', padx=4)
-        ttk.Button(posf, text="Atualizar (clique na tela)", command=self._capturar_pos_chat).grid(row=1, column=1, padx=6)
-        self.lbl_turn_rect = ttk.Label(posf, text=f"Retângulo Barra Turno: {self.pos_mgr.turn_bar_rect}")
-        self.lbl_turn_rect.grid(row=2, column=0, sticky='w', padx=4)
-        ttk.Button(posf, text="Atualizar retângulo", command=self._capturar_turn_bar).grid(row=2, column=1, padx=6)
+        self.lbl_pos_letras = self._pos_row(b, "Área das letras", self.pos_mgr.pos_letras, self._capturar_pos_letras)
+        self.lbl_pos_chat = self._pos_row(b, "Campo de digitação", self.pos_mgr.pos_chatbox, self._capturar_pos_chat)
+        self.lbl_turn_rect = self._pos_row(b, "Barra de turno (2 cliques)", self.pos_mgr.turn_bar_rect, self._capturar_turn_bar)
 
-        ttk.Separator(parent, orient='horizontal').pack(fill='x', padx=8, pady=8)
+        Btn(b, "Salvar posições", command=self._salvar_posicoes, variant="ghost", icon="💾",
+            padx=16, pady=7).pack(anchor="w", pady=(10, 0))
 
-        delf = ttk.LabelFrame(parent, text="Delays (ms)")
-        delf.pack(padx=8, pady=8, fill='x')
+        # --- Delays ---
+        card, b = make_card(body, "Ritmo e limites", "Controla a velocidade geral do ciclo")
+        card.pack(fill="x", pady=(18, 0))
 
-        self.sld_ciclo   = ttk.Scale(delf, from_=80,  to=1000, value=cfg.delay_ciclo_ms,        command=lambda e: None)
-        self.sld_copiar  = ttk.Scale(delf, from_=80,  to=800,  value=cfg.delay_pos_copiar_ms,   command=lambda e: None)
-        self.sld_antes   = ttk.Scale(delf, from_=80,  to=1000, value=cfg.delay_antes_digitar_ms, command=lambda e: None)
+        r = form_row(b, "Entre ciclos", "Pausa entre uma verificação e outra")
+        self.sld_ciclo = Slider(r, 80, 1000, cfg.delay_ciclo_ms, suffix="ms")
+        self.sld_ciclo.pack(fill="x")
 
-        ttk.Label(delf, text="Entre ciclos:").grid(row=0, column=0, sticky='w')
-        ttk.Label(delf, textvariable=self._bind_val(self.sld_ciclo)).grid(row=0, column=2, sticky='w', padx=6)
-        self.sld_ciclo.grid(row=0, column=1, sticky='we', padx=6, pady=4)
+        r = form_row(b, "Após copiar as letras")
+        self.sld_copiar = Slider(r, 80, 800, cfg.delay_pos_copiar_ms, suffix="ms")
+        self.sld_copiar.pack(fill="x")
 
-        ttk.Label(delf, text="Após copiar letras:").grid(row=1, column=0, sticky='w')
-        ttk.Label(delf, textvariable=self._bind_val(self.sld_copiar)).grid(row=1, column=2, sticky='w', padx=6)
-        self.sld_copiar.grid(row=1, column=1, sticky='we', padx=6, pady=4)
+        r = form_row(b, "Antes de digitar a palavra")
+        self.sld_antes = Slider(r, 80, 1000, cfg.delay_antes_digitar_ms, suffix="ms")
+        self.sld_antes.pack(fill="x")
 
-        ttk.Label(delf, text="Antes de digitar palavra:").grid(row=2, column=0, sticky='w')
-        ttk.Label(delf, textvariable=self._bind_val(self.sld_antes)).grid(row=2, column=2, sticky='w', padx=6)
-        self.sld_antes.grid(row=2, column=1, sticky='we', padx=6, pady=4)
+        r = form_row(b, "Limite estimado por rodada",
+                     "Acima disso o bot corta a encenação e envia direto")
+        self.sld_limite = Slider(r, 0.5, 15.0, cfg.limite_tempo_round_s, suffix="s", decimals=1)
+        self.sld_limite.pack(fill="x")
 
-        # Aviso do limite por rodada
-        limf = ttk.LabelFrame(parent, text="Limite estimado por rodada")
-        limf.pack(padx=8, pady=8, fill='x')
-        ttk.Label(limf, text=f"Atual: {cfg.limite_tempo_round_s:.2f} s (configure na seção abaixo)").grid(row=0, column=0, sticky='w')
+        # --- Opções ---
+        card, b = make_card(body, "Opções de seleção")
+        card.pack(fill="x", pady=(18, 0))
 
-        tog = ttk.LabelFrame(parent, text="Opções")
-        tog.pack(padx=8, pady=8, fill='x')
+        grid = tk.Frame(b, bg=T.SURFACE)
+        grid.pack(fill="x")
+        self.tgl_modo_teste = Toggle(grid, "Modo teste (não digita nada)", cfg.modo_teste)
+        self.tgl_modo_teste.grid(row=0, column=0, sticky="w", pady=6)
+        self.tgl_log = Toggle(grid, "Salvar log em arquivo", cfg.salvar_log)
+        self.tgl_log.grid(row=0, column=1, sticky="w", padx=(40, 0), pady=6)
+        self.tgl_penaliza = Toggle(grid, "Penalizar palavras repetidas", cfg.penaliza_repetidas)
+        self.tgl_penaliza.grid(row=1, column=0, sticky="w", pady=6)
 
-        self.var_modo_teste = tk.BooleanVar(value=self.cfg_mgr.config.modo_teste)
-        self.var_log = tk.BooleanVar(value=self.cfg_mgr.config.salvar_log)
-        ttk.Checkbutton(tog, text="Modo Teste (não digita)", variable=self.var_modo_teste).grid(row=0, column=0, sticky='w')
-        ttk.Checkbutton(tog, text="Salvar log em arquivo", variable=self.var_log).grid(row=0, column=1, sticky='w')
+        r = form_row(b, "Cooldown de repetição", "Não repetir palavra usada nas últimas N rodadas")
+        self.stp_cool = Stepper(r, 0, 50, cfg.cooldown_repeticao)
+        self.stp_cool.pack(side="left")
 
-        self.var_penaliza = tk.BooleanVar(value=self.cfg_mgr.config.penaliza_repetidas)
-        ttk.Checkbutton(tog, text="Penalizar repetição/frequência", variable=self.var_penaliza).grid(row=1, column=0, sticky='w')
+        r = form_row(b, "Exibir top N opções", "Quantas alternativas mostrar no console")
+        self.stp_top = Stepper(r, 0, 10, cfg.mostrar_top_n)
+        self.stp_top.pack(side="left")
 
-        ttk.Label(tog, text="Cooldown de repetição (N últimas):").grid(row=1, column=1, sticky='e')
-        self.spn_cool = ttk.Spinbox(tog, from_=0, to=50, width=5)
-        self.spn_cool.delete(0, tk.END); self.spn_cool.insert(0, str(self.cfg_mgr.config.cooldown_repeticao))
-        self.spn_cool.grid(row=1, column=2, sticky='w', padx=4)
+        actions = tk.Frame(body, bg=T.BG)
+        actions.pack(fill="x", pady=18)
+        Btn(actions, "Aplicar e salvar", command=self._salvar_config, variant="primary", icon="✔",
+            padx=22, pady=10).pack(side="left")
+        return page
 
-        ttk.Label(tog, text="Exibir top N opções:").grid(row=2, column=1, sticky='e')
-        self.spn_top = ttk.Spinbox(tog, from_=0, to=10, width=5)
-        self.spn_top.delete(0, tk.END); self.spn_top.insert(0, str(self.cfg_mgr.config.mostrar_top_n))
-        self.spn_top.grid(row=2, column=2, sticky='w', padx=4)
+    def _pos_row(self, parent, label, value, command):
+        r = tk.Frame(parent, bg=T.SURFACE)
+        r.pack(fill="x", pady=5)
+        tk.Label(r, text=label, bg=T.SURFACE, fg=T.TEXT, font=T.FONT, width=30, anchor="w").pack(side="left")
+        Btn(r, "Capturar", command=command, variant="ghost", icon="◎", padx=14, pady=5).pack(side="right")
+        val = tk.Label(r, text=str(value), bg=T.SURFACE, fg=T.ACCENT, font=T.FONT_MONO, anchor="w")
+        val.pack(side="left", padx=(0, 12))
+        return val
 
-        # bloco para setar limite por rodada
-        setf = ttk.LabelFrame(parent, text="Ajustes rápidos")
-        setf.pack(padx=8, pady=8, fill='x')
-        ttk.Label(setf, text="Limite estimado por rodada (s):").grid(row=0, column=0, sticky='w')
-        self.ent_limiteS = ttk.Entry(setf, width=10)
-        self.ent_limiteS.insert(0, f"{cfg.limite_tempo_round_s:.2f}")
-        self.ent_limiteS.grid(row=0, column=1, sticky='w', padx=6)
-
-        ttk.Button(parent, text="Aplicar / Salvar", command=self._salvar_config).pack(pady=8)
-
-    def _build_tab_stats(self, parent):
-        self.lbl_total_dict = ttk.Label(parent, text="Total no dicionário: 0"); self.lbl_total_dict.pack(anchor='w', padx=8, pady=4)
-        self.lbl_hist = ttk.Label(parent, text="Total digitadas: 0 | Alfabetos completos: 0"); self.lbl_hist.pack(anchor='w', padx=8, pady=4)
-        self.lbl_humano = ttk.Label(parent, text="Acertos consecutivos: 0 | Erros propositais: 0"); self.lbl_humano.pack(anchor='w', padx=8, pady=4)
-        self.lbl_nums = ttk.Label(parent, text="Rodadas com números restantes: 0"); self.lbl_nums.pack(anchor='w', padx=8, pady=4)
-
-        ttk.Button(parent, text="Ver histórico completo", command=self._ver_historico).pack(pady=6)
-
-        def refresh():
-            self.lbl_total_dict.config(text=f"Total no dicionário: {len(self.bot.dict.palavras)}")
-            self.lbl_hist.config(text=f"Total digitadas: {len(self.bot.historico)} | Alfabetos completos: {self.bot.selector.alfabeto_completado}")
-            self.lbl_humano.config(text=f"Acertos consecutivos: {self.bot.acertos_consecutivos} | Erros propositais: {self.bot.erros_propositais}")
-            self.lbl_nums.config(text=f"Rodadas com números restantes: {self.bot.numeros_restantes}")
-            parent.after(800, refresh)
-        refresh()
-
-    def _build_tab_human(self, parent):
+    # ---------- Página: Humanização ----------
+    def _build_page_humano(self, parent):
         h = self.cfg_mgr.config.humanizar
+        page = ScrollArea(parent, bg=T.BG)
+        body = page.body
 
-        frm = ttk.Frame(parent); frm.pack(padx=8, pady=8, fill='x')
+        card, b = make_card(body, "Perfil de digitação", "Como o bot distribui o tempo entre as teclas")
+        card.pack(fill="x")
 
-        ttk.Label(frm, text="Perfil de Velocidade:").grid(row=0, column=0, sticky='w')
-        self.perfil_var = tk.StringVar(value=h.perfil)
-        for i, val in enumerate([VelocidadePerfil.RAPIDA.value,
-                                 VelocidadePerfil.ALEATORIA.value,
-                                 VelocidadePerfil.GRADUAL.value,
-                                 VelocidadePerfil.NENHUM.value]):
-            ttk.Radiobutton(frm, text=val.capitalize(), variable=self.perfil_var, value=val).grid(row=0, column=i+1, padx=4)
+        r = form_row(b, "Perfil de velocidade")
+        self.seg_perfil = Segmented(r, [
+            ("Rápida", VelocidadePerfil.RAPIDA.value),
+            ("Aleatória", VelocidadePerfil.ALEATORIA.value),
+            ("Gradual", VelocidadePerfil.GRADUAL.value),
+            ("Nenhum", VelocidadePerfil.NENHUM.value),
+        ], value=h.perfil)
+        self.seg_perfil.pack(side="left")
 
-        ttk.Label(frm, text="Delay entre letras (ms):").grid(row=1, column=0, sticky='w', pady=4)
-        self.sld_delay_letra = ttk.Scale(frm, from_=1, to=120, value=h.delay_entre_letras_ms, command=lambda e: None)
-        ttk.Label(frm, textvariable=self._bind_val(self.sld_delay_letra)).grid(row=1, column=2, sticky='w', padx=6)
-        self.sld_delay_letra.grid(row=1, column=1, sticky='we', padx=6)
+        r = form_row(b, "Delay entre letras")
+        self.sld_delay_letra = Slider(r, 1, 120, h.delay_entre_letras_ms, suffix="ms")
+        self.sld_delay_letra.pack(fill="x")
 
-        ttk.Label(frm, text="Chance de erro por caractere (%):").grid(row=2, column=0, sticky='w', pady=4)
-        self.sld_chance_erro = ttk.Scale(frm, from_=0, to=25, value=h.chance_erro * 100, command=lambda e: None)
-        ttk.Label(frm, textvariable=self._bind_val(self.sld_chance_erro, suffix="%")).grid(row=2, column=2, sticky='w', padx=6)
-        self.sld_chance_erro.grid(row=2, column=1, sticky='we', padx=6)
+        r = form_row(b, "Erro de digitação por caractere", "Erra e corrige com backspace")
+        self.sld_chance_erro = Slider(r, 0, 25, h.chance_erro * 100, suffix="%")
+        self.sld_chance_erro.pack(fill="x")
 
-        ttk.Label(frm, text="Variação delay máx (ms):").grid(row=3, column=0, sticky='w', pady=4)
-        self.sld_var_delay = ttk.Scale(frm, from_=0, to=50, value=h.variacao_delay * 1000, command=lambda e: None)
-        ttk.Label(frm, textvariable=self._bind_val(self.sld_var_delay)).grid(row=3, column=2, sticky='w', padx=6)
-        self.sld_var_delay.grid(row=3, column=1, sticky='we', padx=6)
+        r = form_row(b, "Variação máxima do delay")
+        self.sld_var_delay = Slider(r, 0, 50, h.variacao_delay * 1000, suffix="ms")
+        self.sld_var_delay.pack(fill="x")
 
-        ttk.Label(frm, text="Pausa a cada N letras:").grid(row=4, column=0, sticky='w', pady=4)
-        self.spn_pausa_cada = ttk.Spinbox(frm, from_=2, to=8, width=5)
-        self.spn_pausa_cada.delete(0, tk.END); self.spn_pausa_cada.insert(0, str(h.pausa_cada))
-        self.spn_pausa_cada.grid(row=4, column=1, sticky='w')
+        r = form_row(b, "Respirar a cada N letras")
+        self.stp_pausa_cada = Stepper(r, 2, 8, h.pausa_cada)
+        self.stp_pausa_cada.pack(side="left")
 
-        ttk.Label(frm, text="Pausa min (s):").grid(row=4, column=2, sticky='e')
-        self.ent_pausa_min = ttk.Entry(frm, width=6); self.ent_pausa_min.insert(0, f"{h.pausa_min:.3f}")
-        self.ent_pausa_min.grid(row=4, column=3, sticky='w', padx=4)
+        r = form_row(b, "Pausa mínima")
+        self.sld_pausa_min = Slider(r, 0.0, 0.30, h.pausa_min, suffix="s", decimals=3)
+        self.sld_pausa_min.pack(fill="x")
 
-        ttk.Label(frm, text="Pausa max (s):").grid(row=4, column=4, sticky='e')
-        self.ent_pausa_max = ttk.Entry(frm, width=6); self.ent_pausa_max.insert(0, f"{h.pausa_max:.3f}")
-        self.ent_pausa_max.grid(row=4, column=5, sticky='w', padx=4)
+        r = form_row(b, "Pausa máxima")
+        self.sld_pausa_max = Slider(r, 0.0, 0.60, h.pausa_max, suffix="s", decimals=3)
+        self.sld_pausa_max.pack(fill="x")
 
-        ttk.Separator(parent, orient='horizontal').pack(fill='x', padx=8, pady=8)
+        # --- Comportamentos ---
+        card, b = make_card(body, "Comportamentos humanizados",
+                            "Cada rodada sorteia estes gatilhos de forma independente")
+        card.pack(fill="x", pady=(18, 0))
 
-        nums = ttk.LabelFrame(parent, text="Inserir números aleatórios")
-        nums.pack(fill='x', padx=8, pady=8)
-        self.var_inserir_num = tk.BooleanVar(value=h.inserir_numeros)
-        ttk.Checkbutton(nums, text="Ativar", variable=self.var_inserir_num).grid(row=0, column=0, sticky='w')
-        ttk.Label(nums, text="Rodadas com números:").grid(row=0, column=1, sticky='e')
-        self.spn_nums_rounds = ttk.Spinbox(nums, from_=0, to=50, width=5)
-        self.spn_nums_rounds.delete(0, tk.END); self.spn_nums_rounds.insert(0, str(h.numeros_rodadas))
-        self.spn_nums_rounds.grid(row=0, column=2, sticky='w', padx=4)
+        r = form_row(b, "Falha proposital", "Envia uma palavra errada de vez em quando")
+        self.sld_chance_falha = Slider(r, 0, 50, h.chance_falha_proposital * 100, suffix="%")
+        self.sld_chance_falha.pack(fill="x")
 
-        errgrp = ttk.LabelFrame(parent, text="Comportamentos Humanizados")
-        errgrp.pack(fill='x', padx=8, pady=8)
+        r = form_row(b, "Errar, dar ENTER e corrigir")
+        self.sld_chance_errEnter = Slider(r, 0, 60, h.chance_erro_enter * 100, suffix="%")
+        self.sld_chance_errEnter.pack(fill="x")
 
-        ttk.Label(errgrp, text="Chance de falha proposital (%):").grid(row=0, column=0, sticky='w')
-        self.sld_chance_falha = ttk.Scale(errgrp, from_=0, to=50, value=h.chance_falha_proposital * 100, command=lambda e: None)
-        ttk.Label(errgrp, textvariable=self._bind_val(self.sld_chance_falha, suffix="%")).grid(row=0, column=2, sticky='w', padx=6)
-        self.sld_chance_falha.grid(row=0, column=1, sticky='we', padx=6)
+        r = form_row(b, "Frase engraçada antes", "Digita e apaga uma frase da lista abaixo")
+        self.sld_chance_frase = Slider(r, 0, 100, h.chance_frase_engracada * 100, suffix="%")
+        self.sld_chance_frase.pack(fill="x")
 
-        ttk.Label(errgrp, text="Chance de enviar errado (+ENTER) e corrigir (%):").grid(row=1, column=0, sticky='w')
-        self.sld_chance_errEnter = ttk.Scale(errgrp, from_=0, to=60, value=h.chance_erro_enter * 100, command=lambda e: None)
-        ttk.Label(errgrp, textvariable=self._bind_val(self.sld_chance_errEnter, suffix="%")).grid(row=1, column=2, sticky='w', padx=6)
-        self.sld_chance_errEnter.grid(row=1, column=1, sticky='we', padx=6)
+        r = form_row(b, "Ensaio da palavra", "Digita um rascunho e apaga antes da resposta")
+        self.sld_chance_ensaio = Slider(r, 0, 100, h.chance_ensaio_palavra * 100, suffix="%")
+        self.sld_chance_ensaio.pack(fill="x")
 
-        ttk.Label(errgrp, text="Chance de frase engraçada antes (%):").grid(row=2, column=0, sticky='w')
-        self.sld_chance_frase = ttk.Scale(errgrp, from_=0, to=100, value=h.chance_frase_engracada * 100, command=lambda e: None)
-        ttk.Label(errgrp, textvariable=self._bind_val(self.sld_chance_frase, suffix="%")).grid(row=2, column=2, sticky='w', padx=6)
-        self.sld_chance_frase.grid(row=2, column=1, sticky='we', padx=6)
+        # --- Extras ---
+        card, b = make_card(body, "Extras")
+        card.pack(fill="x", pady=(18, 0))
 
-        ttk.Label(errgrp, text="Chance de 'ensaio' da palavra antes (%):").grid(row=3, column=0, sticky='w')
-        self.sld_chance_ensaio = ttk.Scale(errgrp, from_=0, to=100, value=h.chance_ensaio_palavra * 100, command=lambda e: None)
-        ttk.Label(errgrp, textvariable=self._bind_val(self.sld_chance_ensaio, suffix="%")).grid(row=3, column=2, sticky='w', padx=6)
-        self.sld_chance_ensaio.grid(row=3, column=1, sticky='we', padx=6)
+        r = form_row(b, "Pensar após 3 letras", "Quando a palavra começa com as letras do desafio")
+        self.tgl_pensar3 = Toggle(r, "Ativar", h.pensar_3letras)
+        self.tgl_pensar3.pack(side="left")
 
-        # --- Pensar após 3 letras ---
-        pensarf = ttk.LabelFrame(parent, text="Pensar após 3 letras (se a palavra começar com as 3 do desafio)")
-        pensarf.pack(fill='x', padx=8, pady=8)
-        self.var_pensar3 = tk.BooleanVar(value=h.pensar_3letras)
-        ttk.Checkbutton(pensarf, text="Ativar", variable=self.var_pensar3).grid(row=0, column=0, sticky='w')
-        ttk.Label(pensarf, text="Pausa (ms):").grid(row=0, column=1, sticky='e')
-        self.spn_pensar_ms = ttk.Spinbox(pensarf, from_=100, to=2000, increment=50, width=7)
-        self.spn_pensar_ms.delete(0, tk.END); self.spn_pensar_ms.insert(0, str(h.pensar_3letras_pausa_ms))
-        self.spn_pensar_ms.grid(row=0, column=2, sticky='w', padx=4)
+        r = form_row(b, "Duração da pausa de «pensar»")
+        self.sld_pensar_ms = Slider(r, 100, 2000, h.pensar_3letras_pausa_ms, suffix="ms")
+        self.sld_pensar_ms.pack(fill="x")
 
-        ttk.Label(parent, text="Frases engraçadas (uma por linha):").pack(anchor='w', padx=8)
-        self.txt_frases = scrolledtext.ScrolledText(parent, height=6, wrap=tk.WORD)
+        r = form_row(b, "Inserir números aleatórios")
+        self.tgl_inserir_num = Toggle(r, "Ativar", h.inserir_numeros)
+        self.tgl_inserir_num.pack(side="left")
+
+        r = form_row(b, "Rodadas com números")
+        self.stp_nums_rounds = Stepper(r, 0, 50, h.numeros_rodadas)
+        self.stp_nums_rounds.pack(side="left")
+
+        # --- Frases ---
+        card, b = make_card(body, "Frases engraçadas", "Uma por linha. Vazio usa a lista padrão do app.")
+        card.pack(fill="x", pady=(18, 0))
+        fwrap = tk.Frame(b, bg=T.SURFACE_2, highlightthickness=1, highlightbackground=T.BORDER)
+        fwrap.pack(fill="x")
+        self.txt_frases = tk.Text(fwrap, height=7, bg=T.SURFACE_2, fg=T.TEXT, font=T.FONT_MONO,
+                                  relief="flat", wrap="word", padx=12, pady=10,
+                                  insertbackground=T.ACCENT, selectbackground=T.HOVER)
+        self.txt_frases.pack(fill="x")
         if h.frases_customizadas:
             self.txt_frases.insert(tk.END, "\n".join(h.frases_customizadas))
-        self.txt_frases.pack(fill='x', padx=8, pady=4)
 
-        ttk.Button(parent, text="Aplicar / Salvar", command=self._salvar_config).pack(pady=8)
+        actions = tk.Frame(body, bg=T.BG)
+        actions.pack(fill="x", pady=18)
+        Btn(actions, "Aplicar e salvar", command=self._salvar_config, variant="primary", icon="✔",
+            padx=22, pady=10).pack(side="left")
+        return page
 
-    # ---------- Helpers ----------
-    def _bind_val(self, scale: ttk.Scale, suffix="ms"):
-        var = tk.StringVar(value=f"{int(scale.get())} {suffix}")
-        def upd(_evt=None):
-            if suffix == "%":
-                var.set(f"{int(scale.get())}{suffix}")
-            else:
-                try:
-                    val = float(scale.get())
-                    var.set(f"{val:.0f} {suffix}" if suffix != "s" else f"{val:.1f} {suffix}")
-                except:
-                    var.set(f"{int(scale.get())} {suffix}")
-        scale.configure(command=lambda e: upd())
-        return var
+    # ---------- Página: Estatísticas ----------
+    def _build_page_stats(self, parent):
+        page = tk.Frame(parent, bg=T.BG)
 
-    def _apply_dev_label(self, parent):
-        lbl = tk.Label(parent, text="Desenvolvedor: @lucasleao18", font=('Arial', 9))
-        lbl.place(relx=1.0, rely=1.0, anchor='se')
-        def rainbow():
-            r = lambda: random.randint(0, 255)
-            lbl.config(fg=f"#{r():02x}{r():02x}{r():02x}")
-            parent.after(500, rainbow)
-        rainbow()
+        cards = tk.Frame(page, bg=T.BG)
+        cards.pack(fill="x")
+        self.st_dict = StatCard(cards, "palavras no dicionário", "0", T.PURPLE)
+        self.st_enviadas = StatCard(cards, "palavras enviadas", "0", T.ACCENT)
+        self.st_alfabeto = StatCard(cards, "alfabetos completos", "0", T.SUCCESS)
+        self.st_erros = StatCard(cards, "erros propositais", "0", T.WARN)
+        for i, c in enumerate((self.st_dict, self.st_enviadas, self.st_alfabeto, self.st_erros)):
+            c.grid(row=0, column=i, sticky="nsew", padx=(0 if i == 0 else 12, 0))
+            cards.columnconfigure(i, weight=1)
 
-    # ---------- Terminal ----------
-    def append_terminal(self, text: str):
-        self.terminal.config(state=tk.NORMAL)
-        self.terminal.insert(tk.END, f"{now()} - {text}\n")
-        self.terminal.config(state=tk.DISABLED)
-        self.terminal.yview(tk.END)
+        cards2 = tk.Frame(page, bg=T.BG)
+        cards2.pack(fill="x", pady=(14, 0))
+        self.st_seq = StatCard(cards2, "acertos consecutivos", "0", T.SUCCESS)
+        self.st_nums = StatCard(cards2, "rodadas c/ números restantes", "0", T.PURPLE)
+        for i, c in enumerate((self.st_seq, self.st_nums)):
+            c.grid(row=0, column=i, sticky="nsew", padx=(0 if i == 0 else 12, 0))
+            cards2.columnconfigure(i, weight=1)
 
-    # ---------- Eventos ----------
-    def _on_modo(self):
-        modo = self.modo_var.get()
+        card, b = make_card(page, "Histórico da sessão", "Palavras enviadas e quantas vezes cada uma foi usada")
+        card.pack(fill="both", expand=True, pady=(18, 0))
+
+        tools = tk.Frame(b, bg=T.SURFACE)
+        tools.pack(fill="x", pady=(0, 10))
+        Btn(tools, "Atualizar", command=self._refresh_historico, variant="ghost", icon="⟳",
+            padx=14, pady=6).pack(side="left")
+        Btn(tools, "Exportar .txt", command=self._exportar_historico, variant="ghost", icon="⇩",
+            padx=14, pady=6).pack(side="left", padx=8)
+
+        wrap = tk.Frame(b, bg=T.SURFACE_2, highlightthickness=1, highlightbackground=T.BORDER)
+        wrap.pack(fill="both", expand=True)
+        self.txt_hist = tk.Text(wrap, bg=T.SURFACE_2, fg=T.TEXT_DIM, font=T.FONT_MONO, relief="flat",
+                                padx=14, pady=10, state=tk.DISABLED, wrap="none")
+        sb = ttk.Scrollbar(wrap, orient="vertical", command=self.txt_hist.yview, style="Dark.Vertical.TScrollbar")
+        self.txt_hist.configure(yscrollcommand=sb.set)
+        self.txt_hist.pack(side="left", fill="both", expand=True)
+        sb.pack(side="right", fill="y")
+        return page
+
+    # ---------- Console / logs ----------
+    def enqueue_log(self, text: str):
+        """Chamado por qualquer thread; a UI consome via _drain_logs."""
+        self._log_queue.put(text)
+
+    # mantido por compatibilidade com chamadas diretas
+    append_terminal = enqueue_log
+
+    def _drain_logs(self):
+        try:
+            while True:
+                self._write_log(self._log_queue.get_nowait())
+        except queue.Empty:
+            pass
+        self.root.after(90, self._drain_logs)
+
+    @staticmethod
+    def _level_of(msg: str) -> str:
+        m = msg.lower()
+        if any(k in m for k in ("erro", "falha", "não encontrad", "nao encontrad", "cancelad")):
+            return "err" if "falha ao" in m or "não encontrad" in m or "nao encontrad" in m else "warn"
+        if any(k in m for k in ("escolhida", "carregad", "salv", "concluíd", "concluid")):
+            return "ok"
+        if any(k in m for k in ("fast path", "kill switch", "parad", "desativad")):
+            return "warn"
+        if any(k in m for k in ("letras detectadas", "iniciando", "modo selecionado")):
+            return "accent"
+        return "info"
+
+    def _write_log(self, text: str):
+        self.terminal.configure(state=tk.NORMAL)
+        self.terminal.insert(tk.END, datetime.datetime.now().strftime("%H:%M:%S  "), "time")
+        self.terminal.insert(tk.END, f"{text}\n", self._level_of(text))
+        # limita o buffer para não crescer sem fim
+        if int(self.terminal.index("end-1c").split(".")[0]) > 1500:
+            self.terminal.delete("1.0", "400.0")
+        self.terminal.configure(state=tk.DISABLED)
+        if self.tgl_autoscroll.get():
+            self.terminal.see(tk.END)
+
+        self._update_live(text)
+        self.lbl_status_msg.configure(text=text[:120])
+
+    def _update_live(self, text: str):
+        if text.startswith("Letras detectadas:"):
+            self.live_letras.configure(text=text.split(":", 1)[1].strip().upper())
+            self.live_evento.configure(text="analisando dicionário…")
+        elif text.startswith("Escolhida:"):
+            self.live_palavra.configure(text=text.split(":", 1)[1].strip())
+            self.live_evento.configure(text="digitando…")
+        elif text.startswith("Estimativa do round"):
+            self.live_evento.configure(text=text.split("|")[0].replace("Estimativa do round:", "estimativa:").strip())
+        elif "FAST PATH" in text:
+            self.live_evento.configure(text="fast path — enviando direto")
+        elif "Nenhuma palavra encontrada" in text:
+            self.live_palavra.configure(text="—")
+            self.live_evento.configure(text="sem candidatos no dicionário")
+
+    def _limpar_terminal(self):
+        self.terminal.configure(state=tk.NORMAL)
+        self.terminal.delete("1.0", tk.END)
+        self.terminal.configure(state=tk.DISABLED)
+
+    def _copiar_terminal(self):
+        try:
+            pyperclip.copy(self.terminal.get("1.0", tk.END))
+            self.enqueue_log("Console copiado para a área de transferência.")
+        except Exception as e:
+            self.enqueue_log(f"Falha ao copiar console: {e}")
+
+    # ---------- Estatísticas ----------
+    def _refresh_stats(self):
+        total_dict = len(self.bot.dict.palavras)
+        enviadas = len(self.bot.historico)
+        self.st_dict.set(total_dict)
+        self.st_enviadas.set(enviadas)
+        self.st_alfabeto.set(self.bot.selector.alfabeto_completado)
+        self.st_erros.set(self.bot.erros_propositais)
+        self.st_seq.set(self.bot.acertos_consecutivos)
+        self.st_nums.set(self.bot.numeros_restantes)
+        self.card_palavras.set(enviadas)
+        self.card_sequencia.set(self.bot.acertos_consecutivos)
+        self.card_dict.set(total_dict)
+        self.lbl_status_right.configure(
+            text=f"modo: {self.bot.modo_atual}   ·   dicionário: {total_dict}   ·   enviadas: {enviadas}")
+        self.root.after(700, self._refresh_stats)
+
+    def _refresh_historico(self):
+        self.txt_hist.configure(state=tk.NORMAL)
+        self.txt_hist.delete("1.0", tk.END)
+        if not self.bot.historico:
+            self.txt_hist.insert(tk.END, "Nenhuma palavra enviada nesta sessão ainda.")
+        else:
+            for i, w in enumerate(reversed(self.bot.historico), 1):
+                c = self.bot.selector.frequencia.get(w, 0)
+                self.txt_hist.insert(tk.END, f"{i:>4}.  {w:<28} usada {c}x\n")
+        self.txt_hist.configure(state=tk.DISABLED)
+
+    def _exportar_historico(self):
+        if not self.bot.historico:
+            self.enqueue_log("Nada para exportar: histórico vazio.")
+            return
+        path = filedialog.asksaveasfilename(defaultextension=".txt",
+                                            initialfile="historico.txt",
+                                            filetypes=[("Texto", "*.txt")])
+        if not path:
+            return
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                for w in self.bot.historico:
+                    f.write(f"{w}\t{self.bot.selector.frequencia.get(w, 0)}\n")
+            self.enqueue_log(f"Histórico exportado para {path}")
+        except Exception as e:
+            self.enqueue_log(f"Falha ao exportar histórico: {e}")
+
+    # ---------- Eventos principais ----------
+    def _on_modo(self, modo):
         self.cfg_mgr.config.modo = modo
         self.bot.set_modo(modo)
 
     def _iniciar(self):
         self._capturar_config_da_ui()
-        if not os.path.exists(self.cfg_mgr.config.caminho_dicionario):
-            messagebox.showerror("Erro", f" Dicionário não encontrado: {self.cfg_mgr.config.caminho_dicionario}")
+        cfg = self.cfg_mgr.config
+        if not os.path.exists(cfg.caminho_dicionario):
+            messagebox.showerror("Dicionário não encontrado",
+                                 f"Não encontrei o arquivo:\n{cfg.caminho_dicionario}")
+            self.enqueue_log(f"Dicionário não encontrado: {cfg.caminho_dicionario}")
             return
-        # ressincroniza contador de rodadas com números
-        self.bot.numeros_restantes = self.cfg_mgr.config.humanizar.numeros_rodadas if self.cfg_mgr.config.humanizar.inserir_numeros else 0
-        self.lbl_status.config(text="Status: Rodando", foreground="green")
+        self.bot.numeros_restantes = cfg.humanizar.numeros_rodadas if cfg.humanizar.inserir_numeros else 0
+        self._paint_pill(True)
+        self.btn_iniciar.set_enabled(False)
+        self.btn_parar.set_enabled(True)
+        self.live_evento.configure(text="procurando a chatbox…")
         self.bot.iniciar()
 
     def _parar(self):
         self.bot.parar()
-        self.lbl_status.config(text="Status: Parado", foreground="red")
+        self._paint_pill(False)
+        self.btn_iniciar.set_enabled(True)
+        self.btn_parar.set_enabled(False)
+        self.live_evento.configure(text="parado")
 
     def _handle_kill_switch(self):
         if self.bot.executando:
-            self.append_terminal("F8 pressionado - kill switch acionado.")
+            self.enqueue_log("F8 pressionado — kill switch acionado.")
         self._parar()
 
     def _monitor_f8(self):
@@ -1301,164 +2077,176 @@ class AppUI:
                 time.sleep(0.5)
             time.sleep(0.1)
 
-    # ---------- Navegação arquivos ----------
+    def _toggle_topmost(self, value):
+        self.root.attributes("-topmost", bool(value))
+
+    def _on_close(self):
+        try:
+            self.bot.parar()
+        finally:
+            self.root.destroy()
+
+    # ---------- Arquivos ----------
     def _browse_dict(self):
-        path = filedialog.askopenfilename(title="Selecionar dicionário (txt)", filetypes=[("Textos", "*.txt"), ("Todos", "*.*")])
+        path = filedialog.askopenfilename(title="Selecionar dicionário (txt)",
+                                          filetypes=[("Textos", "*.txt"), ("Todos", "*.*")])
         if path:
             self.ent_dict.delete(0, tk.END)
             self.ent_dict.insert(0, path)
 
     def _browse_tpl(self):
-        path = filedialog.askopenfilename(title="Selecionar template da chatbox (png)", filetypes=[("Imagens", "*.png"), ("Todos", "*.*")])
+        path = filedialog.askopenfilename(title="Selecionar template da chatbox (png)",
+                                          filetypes=[("Imagens", "*.png"), ("Todos", "*.*")])
         if path:
             self.ent_tpl.delete(0, tk.END)
             self.ent_tpl.insert(0, path)
 
-    # ---------- Posições ----------
+    # ---------- Captura de posições ----------
     def _capturar_pos_letras(self):
-        self.append_terminal("Clique no jogo onde as letras aparecem (duplo clique para selecionar).")
-        self._capturar_posicao(lambda x, y: self._set_pos('letras', x, y))
+        self._start_capture("Clique onde as LETRAS aparecem no jogo",
+                            lambda x, y: self._set_pos('letras', x, y))
 
     def _capturar_pos_chat(self):
-        self.append_terminal("Clique na chatbox do jogo (onde digita as palavras).")
-        self._capturar_posicao(lambda x, y: self._set_pos('chat', x, y))
+        self._start_capture("Clique no CAMPO DE DIGITAÇÃO do jogo",
+                            lambda x, y: self._set_pos('chat', x, y))
 
     def _capturar_turn_bar(self):
-        self.append_terminal("Clique no canto superior esquerdo da barra de turno e depois no canto inferior direito.")
-        self._capturar_retangulo(self._set_turn_bar)
+        self._start_capture("Clique no canto SUPERIOR ESQUERDO e depois no INFERIOR DIREITO da barra de turno",
+                            self._set_turn_bar, pontos=2)
 
-    def _capturar_posicao(self, callback):
+    def _start_capture(self, instrucao, callback, pontos=1):
+        self._stop_capture()
+        self._show_capture_hint(instrucao)
+        coletados = []
+
         def on_click(x, y, button, pressed):
-            if pressed:
-                callback(x, y)
+            if not pressed:
+                return
+            coletados.append((int(x), int(y)))
+            self.enqueue_log(f"Ponto {len(coletados)} registrado: ({int(x)}, {int(y)})")
+            if len(coletados) >= pontos:
+                args = tuple(coletados) if pontos > 1 else coletados[0]
+                self.root.after(0, lambda: (self._stop_capture(), callback(*args)))
                 return False
-        threading.Thread(target=lambda: mouse.Listener(on_click=on_click).start(), daemon=True).start()
 
-    def _capturar_retangulo(self, callback):
-        pontos = []
+        self._capture_listener = mouse.Listener(on_click=on_click)
+        self._capture_listener.start()
 
-        def on_click(x, y, button, pressed):
-            if pressed:
-                pontos.append((x, y))
-                self.append_terminal(f"Ponto {len(pontos)} registrado: ({x}, {y})")
-                if len(pontos) >= 2:
-                    callback(pontos[0], pontos[1])
-                    return False
-        threading.Thread(target=lambda: mouse.Listener(on_click=on_click).start(), daemon=True).start()
+    def _show_capture_hint(self, texto):
+        hint = Toplevel(self.root)
+        hint.overrideredirect(True)
+        hint.attributes("-topmost", True)
+        hint.configure(bg=T.ACCENT)
+        frame = tk.Frame(hint, bg=T.SURFACE, padx=22, pady=14)
+        frame.pack(padx=2, pady=2)
+        tk.Label(frame, text="MODO CAPTURA", bg=T.SURFACE, fg=T.ACCENT,
+                 font=("Segoe UI", 8, "bold")).pack(anchor="w")
+        tk.Label(frame, text=texto, bg=T.SURFACE, fg=T.TEXT, font=T.FONT_H2).pack(anchor="w", pady=(3, 8))
+        Btn(frame, "Cancelar", command=self._stop_capture, variant="ghost", padx=12, pady=4).pack(anchor="w")
+        hint.update_idletasks()
+        w, h = hint.winfo_width(), hint.winfo_height()
+        x = int((self.root.winfo_screenwidth() - w) / 2)
+        hint.geometry(f"+{x}+40")
+        self._capture_hint = hint
+
+    def _stop_capture(self):
+        if self._capture_listener is not None:
+            try:
+                self._capture_listener.stop()
+            except Exception:
+                pass
+            self._capture_listener = None
+        if self._capture_hint is not None:
+            try:
+                self._capture_hint.destroy()
+            except Exception:
+                pass
+            self._capture_hint = None
 
     def _set_pos(self, which, x, y):
         if which == 'letras':
             self.pos_mgr.pos_letras = (x, y)
-            self.append_terminal(f"Posição Letras -> {self.pos_mgr.pos_letras}")
+            self.lbl_pos_letras.configure(text=str(self.pos_mgr.pos_letras))
+            self.enqueue_log(f"Posição das letras definida: {self.pos_mgr.pos_letras}")
         else:
             self.pos_mgr.pos_chatbox = (x, y)
-            self.append_terminal(f"Posição Chatbox -> {self.pos_mgr.pos_chatbox}")
+            self.lbl_pos_chat.configure(text=str(self.pos_mgr.pos_chatbox))
+            self.enqueue_log(f"Posição da chatbox definida: {self.pos_mgr.pos_chatbox}")
 
     def _set_turn_bar(self, p1, p2):
         x1, y1 = p1
         x2, y2 = p2
-        left = int(min(x1, x2))
-        top = int(min(y1, y2))
-        width = int(abs(x2 - x1)) or 1
-        height = int(abs(y2 - y1)) or 1
-        self.pos_mgr.turn_bar_rect = (left, top, width, height)
-        if hasattr(self, 'lbl_turn_rect'):
-            self.lbl_turn_rect.config(text=f"Retângulo Barra Turno: {self.pos_mgr.turn_bar_rect}")
-        self.append_terminal(f"Barra de turno definida: {self.pos_mgr.turn_bar_rect}")
+        rect = (int(min(x1, x2)), int(min(y1, y2)), int(abs(x2 - x1)) or 1, int(abs(y2 - y1)) or 1)
+        self.pos_mgr.turn_bar_rect = rect
+        self.lbl_turn_rect.configure(text=str(rect))
+        self.enqueue_log(f"Barra de turno definida: {rect}")
         self.bot.capt.turn_bar_reference = None
         self.bot.capt._warned_turn_rect = False
 
-    # ---------- Salvar/Aplicar ----------
+    # ---------- Config ----------
     def _capturar_config_da_ui(self):
         cfg = self.cfg_mgr.config
         cfg.caminho_dicionario = self.ent_dict.get().strip()
         cfg.template_chatbox = self.ent_tpl.get().strip()
-        try: cfg.template_threshold = float(self.spn_thr.get())
-        except: pass
-        try: cfg.turn_bar_threshold = float(self.spn_turn_thr.get())
-        except: pass
+        cfg.template_threshold = round(self.sld_thr.get(), 2)
+        cfg.turn_bar_threshold = round(self.sld_turn_thr.get(), 2)
 
-        cfg.delay_ciclo_ms = int(float(self.sld_ciclo.get()))
-        cfg.delay_pos_copiar_ms = int(float(self.sld_copiar.get()))
-        cfg.delay_antes_digitar_ms = int(float(self.sld_antes.get()))
+        cfg.delay_ciclo_ms = int(self.sld_ciclo.get())
+        cfg.delay_pos_copiar_ms = int(self.sld_copiar.get())
+        cfg.delay_antes_digitar_ms = int(self.sld_antes.get())
+        cfg.limite_tempo_round_s = round(self.sld_limite.get(), 2)
 
-        # limite via input
-        try:
-            cfg.limite_tempo_round_s = float(self.ent_limiteS.get().replace(',', '.'))
-        except: pass
-
-        cfg.modo_teste = self.var_modo_teste.get()
-        cfg.salvar_log = self.var_log.get()
-        cfg.penaliza_repetidas = self.var_penaliza.get()
-        try: cfg.cooldown_repeticao = int(self.spn_cool.get())
-        except: pass
-        try: cfg.mostrar_top_n = int(self.spn_top.get())
-        except: pass
+        cfg.modo = self.modo_sel.get()
+        cfg.modo_teste = self.tgl_modo_teste.get()
+        cfg.salvar_log = self.tgl_log.get()
+        cfg.penaliza_repetidas = self.tgl_penaliza.get()
+        cfg.cooldown_repeticao = self.stp_cool.get()
+        cfg.mostrar_top_n = self.stp_top.get()
 
         h = cfg.humanizar
-        h.perfil = self.perfil_var.get()
-        h.delay_entre_letras_ms = int(float(self.sld_delay_letra.get()))
-        h.chance_erro = float(self.sld_chance_erro.get()) / 100.0
-        h.variacao_delay = float(self.sld_var_delay.get()) / 1000.0
-        try: h.pausa_cada = int(self.spn_pausa_cada.get())
-        except: pass
-        try:
-            h.pausa_min = float(self.ent_pausa_min.get())
-            h.pausa_max = float(self.ent_pausa_max.get())
-            if h.pausa_min > h.pausa_max:
-                h.pausa_min, h.pausa_max = h.pausa_max, h.pausa_min
-        except: pass
+        h.perfil = self.seg_perfil.get()
+        h.delay_entre_letras_ms = int(self.sld_delay_letra.get())
+        h.chance_erro = self.sld_chance_erro.get() / 100.0
+        h.variacao_delay = self.sld_var_delay.get() / 1000.0
+        h.pausa_cada = self.stp_pausa_cada.get()
+        h.pausa_min = round(self.sld_pausa_min.get(), 3)
+        h.pausa_max = round(self.sld_pausa_max.get(), 3)
+        if h.pausa_min > h.pausa_max:
+            h.pausa_min, h.pausa_max = h.pausa_max, h.pausa_min
 
-        # números + rodadas
-        h.inserir_numeros = self.var_inserir_num.get()
-        try: h.numeros_rodadas = int(self.spn_nums_rounds.get())
-        except: h.numeros_rodadas = 0
+        h.inserir_numeros = self.tgl_inserir_num.get()
+        h.numeros_rodadas = self.stp_nums_rounds.get()
 
-        # chances novas
-        h.chance_falha_proposital = float(self.sld_chance_falha.get()) / 100.0
-        h.chance_erro_enter = float(self.sld_chance_errEnter.get()) / 100.0
-        h.chance_frase_engracada = float(self.sld_chance_frase.get()) / 100.0
-        h.chance_ensaio_palavra = float(self.sld_chance_ensaio.get()) / 100.0
+        h.chance_falha_proposital = self.sld_chance_falha.get() / 100.0
+        h.chance_erro_enter = self.sld_chance_errEnter.get() / 100.0
+        h.chance_frase_engracada = self.sld_chance_frase.get() / 100.0
+        h.chance_ensaio_palavra = self.sld_chance_ensaio.get() / 100.0
 
-        # pensar após 3 letras
-        h.pensar_3letras = self.var_pensar3.get()
-        try: h.pensar_3letras_pausa_ms = int(self.spn_pensar_ms.get())
-        except: pass
+        h.pensar_3letras = self.tgl_pensar3.get()
+        h.pensar_3letras_pausa_ms = int(self.sld_pensar_ms.get())
 
-        # frases custom
         txt = self.txt_frases.get("1.0", tk.END).strip()
         h.frases_customizadas = [ln.strip() for ln in txt.splitlines() if ln.strip()]
 
     def _salvar_config(self):
         self._capturar_config_da_ui()
         self.cfg_mgr.save()
-        self.append_terminal("Configurações salvas.")
-        self.bot.cfg = self.cfg_mgr.config  # atualiza bot
+        self.bot.cfg = self.cfg_mgr.config
         self.bot.capt.cfg = self.cfg_mgr.config
         self.bot.typer.cfg = self.cfg_mgr.config
+        self.bot.selector.cfg = self.cfg_mgr.config
+        self.enqueue_log("Configurações salvas.")
 
     def _salvar_posicoes(self):
         self.pos_mgr.save()
-        self.append_terminal("Posições salvas.")
+        self.enqueue_log("Posições salvas.")
 
     def _recarregar_dicionario(self):
         self._capturar_config_da_ui()
         if not self.bot.carregar_dict_e_blacklist():
-            messagebox.showerror("Erro", f"Falha ao carregar dicionário: {self.cfg_mgr.config.caminho_dicionario}")
+            messagebox.showerror("Erro", f"Falha ao carregar dicionário:\n{self.cfg_mgr.config.caminho_dicionario}")
             return
-        self.append_terminal("Dicionário recarregado.")
-
-    def _toggle_topmost(self):
-        self.root.attributes("-topmost", bool(self.var_topmost.get()))
-
-    def _ver_historico(self):
-        win = Toplevel(self.root)
-        win.title("Histórico Completo")
-        txt = scrolledtext.ScrolledText(win, wrap=tk.WORD, width=80, height=30)
-        txt.pack(expand=1, fill='both')
-        for w in self.bot.historico:
-            c = self.bot.selector.frequencia.get(w, 0)
-            txt.insert(tk.END, f"{now()} - {w} (usada {c}x)\n")
+        self.enqueue_log("Dicionário recarregado.")
 
 
 # ==============================

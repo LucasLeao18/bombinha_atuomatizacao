@@ -3,7 +3,10 @@
 Aplicacao desktop em Python para automatizar partidas no jogo JKLM.fun (modo Bomb Party), com interface Tkinter e comportamentos humanizados.
 
 ## Recursos
-- Interface grafica completa para configuracoes e monitoramento em tempo real.
+- Interface grafica moderna (tema escuro) com menu lateral, cartoes, sliders e switches.
+- Painel "Rodada atual" mostrando letras detectadas, palavra escolhida e evento em tempo real.
+- Console colorido por nivel (sucesso, aviso, erro) com rolagem automatica e copiar/limpar.
+- Estatisticas em cartoes e historico da sessao exportavel para .txt.
 - Captura automatica das letras do turno e selecao inteligente de palavras usando dicionario.
 - Modo alfabeto com rastreio de letras usadas, cooldown de repeticao e blacklist personalizada.
 - Perfil de digitacao humanizado: erros simulados, pausas, ensaio, frases aleatorias e insercao de numeros.
@@ -30,18 +33,29 @@ python -m pip install -r requirements.txt
 ## Como usar
 1. Certifique-se de que a resolucao/escala do Windows corresponde a utilizada quando as coordenadas foram salvas.
 2. Execute `python codigov4.py`.
-3. Na aba **Setup**:
+3. Na pagina **Setup**:
    - Aponte para o dicionario (`acento.txt`).
-   - Ajuste as posicoes de letras e chatbox.
-   - Capture o retangulo da barra de turno (clique canto superior esquerdo, depois inferior direito).
-   - Ajuste thresholds, delays e demais opcoes conforme necessario.
-4. Na aba **Principal**, escolha o modo de jogo e clique **Iniciar**.
+   - Clique em **Capturar** e depois no ponto correspondente dentro do jogo (letras e campo de digitacao).
+   - Para a barra de turno sao dois cliques: canto superior esquerdo e inferior direito.
+   - Ajuste thresholds, delays e demais opcoes conforme necessario e clique **Aplicar e salvar**.
+4. Na pagina **Principal**, escolha o modo de jogo e clique **Iniciar**.
 5. Use `F8` como kill-switch rapido.
+
+## Navegacao da interface
+| Pagina | Para que serve |
+| --- | --- |
+| **Principal** | Modo de jogo, botoes Iniciar/Parar e acompanhamento da rodada atual |
+| **Console** | Log colorido de tudo que o bot decide, com copiar/limpar |
+| **Setup** | Dicionario, posicoes de tela, delays e opcoes de selecao |
+| **Humanizacao** | Perfil de digitacao, chances de erro e frases engracadas |
+| **Estatisticas** | Cartoes de desempenho e historico da sessao (exportavel) |
+
+Atalhos: `F8` para parar tudo, `Ctrl+S` para salvar as configuracoes.
 
 ## Dicas de configuracao
 - Threshold da barra: aumente se houver falsos negativos; reduza se detectar turnos alheios.
-- Ative "Modo Teste" para revisar o fluxo sem enviar teclas.
-- Utilize a aba **Erros/Humano** para ajustar probabilidades de comportamento humanizado.
+- Ative "Modo Teste" (Setup > Opcoes) para revisar o fluxo sem enviar nenhuma tecla.
+- Use a pagina **Humanizacao** para ajustar probabilidades de comportamento humanizado.
 
 ## Segurança
 - Execute o bot em modo janela focada no jogo para evitar digitar em outros aplicativos.
