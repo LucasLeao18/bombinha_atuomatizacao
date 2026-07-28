@@ -14,7 +14,7 @@ import keyboard
 
 from PIL import ImageGrab
 from enum import Enum
-from dataclasses import dataclass, asdict, field
+from dataclasses import dataclass, asdict, field, fields
 from collections import deque
 
 # UI
@@ -31,9 +31,14 @@ APP_NAME = "JKLM.fun – Automação PT-BR"
 CONFIG_FILE = "config.json"
 POSICOES_FILE = "posicoes.json"
 BLACKLIST_FILE = "blacklist.txt"
+REJEITADAS_FILE = "rejeitadas.txt"
 LOG_FILE = "log.txt"
 
+# Valor gravado no clipboard antes do Ctrl+C: se continuar lá, a cópia falhou
+SENTINELA_CLIPBOARD = "\x00__jklm_captura__\x00"
+
 IGNORADAS_ALFABETO = set("ykw")  # Ignorar Y,K,W para completar 23 letras
+LETRAS_ALFABETO = [c for c in string.ascii_lowercase if c not in IGNORADAS_ALFABETO]
 APENAS_LETRAS_RE = re.compile(r'[^A-Za-zÀ-ÖØ-öø-ÿ]')  # mantém acentos PT-BR
 
 FRASES_ENGRACADAS_DEFAULT = [
@@ -53,6 +58,17 @@ class Modo(Enum):
     QUALQUER = 'qualquer'
     ALFABETO = 'alfabeto'
 
+
+class MetodoCaptura(Enum):
+    CLIPBOARD = 'clipboard'   # duplo-clique + Ctrl+C (padrão, sem dependências extras)
+    OCR = 'ocr'               # leitura da imagem da sílaba (exige pytesseract + tesseract)
+
+
+class MetodoTurno(Enum):
+    PIXEL = 'pixel'           # diferença absoluta em tons de cinza (comportamento original)
+    COR = 'cor'               # correlação de histograma HSV
+    HIBRIDO = 'hibrido'       # média dos dois
+
 class VelocidadePerfil(Enum):
     NENHUM = 'nenhum'
     RAPIDA = 'rapida'
@@ -62,6 +78,25 @@ class VelocidadePerfil(Enum):
 
 def clamp(v, lo, hi):
     return max(lo, min(hi, v))
+
+
+def aplicar_dpi_awareness(ativar: bool):
+    """Alinha as coordenadas do pyautogui com os pixels reais da tela.
+
+    Precisa ser chamado antes de criar qualquer janela. Fica desligado por padrão
+    porque muda o significado das coordenadas já calibradas.
+    """
+    if not ativar or os.name != "nt":
+        return None
+    try:
+        import ctypes
+        try:
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)  # PER_MONITOR_AWARE
+        except Exception:
+            ctypes.windll.user32.SetProcessDPIAware()
+        return "Ciência de DPI ativada: recalibre as posições se elas foram salvas sem ela."
+    except Exception as exc:
+        return f"Não foi possível ativar a ciência de DPI: {exc}"
 
 
 def now():
@@ -126,10 +161,48 @@ class AppConfig:
     # Modo inicial
     modo: str = Modo.QUALQUER.value
 
+    # ===== Captura da sílaba =====
+    metodo_captura: str = MetodoCaptura.CLIPBOARD.value
+    # Devolve à área de transferência o que o usuário tinha antes da captura
+    preservar_clipboard: bool = True
+    # 'duplo' (seleciona a palavra), 'triplo' (seleciona a linha inteira – mais
+    # tolerante a errar o glifo) ou 'auto' (duplo e, se falhar, triplo)
+    clique_captura: str = 'auto'
+    # Quantas vezes repetir o clique+Ctrl+C antes de desistir do ciclo
+    tentativas_captura: int = 3
+
+    # ===== Detecção de turno =====
+    turn_bar_metodo: str = MetodoTurno.PIXEL.value
+
+    # ===== Verificação de envio / aprendizado =====
+    # Confere se a palavra foi aceita: se continuar sendo a sua vez, foi recusada
+    verificar_envio: bool = True
+    delay_verificacao_ms: int = 350
+    max_tentativas_rodada: int = 3
+    # Grava em rejeitadas.txt palavras recusadas 2x (o jogo não as conhece)
+    aprender_rejeitadas: bool = True
+
     # Anti-repetição e seleção
     penaliza_repetidas: bool = True
     penalizacao_repetida: float = 0.85     # fator multiplicativo para pontuação
     cooldown_repeticao: int = 5            # não repetir a mesma palavra nas últimas N
+    # O JKLM recusa qualquer palavra repetida na mesma partida: exclusão dura
+    bloquear_usadas_na_partida: bool = True
+    # Preferência por palavras que COMEÇAM com a sílaba (independente da encenação)
+    preferir_prefixo: bool = True
+    peso_prefixo: float = 1.25
+    # Mistura a caça ao alfabeto nos modos normais quando sobra tempo
+    alfabeto_hibrido: bool = True
+    peso_letras_novas: float = 0.6
+
+    # ===== Partida =====
+    # Zera o estado por partida após um período sem turnos
+    auto_nova_partida: bool = True
+    inatividade_nova_partida_s: float = 60.0
+
+    # ===== Sistema =====
+    # Só ative se as coordenadas foram calibradas com o app ciente de DPI
+    dpi_aware: bool = False
 
     # Exibir top opções no terminal
     mostrar_top_n: int = 5
@@ -160,10 +233,13 @@ class ConfigManager:
         with open(self.path, "r", encoding="utf-8") as f:
             data = json.load(f)
 
-        # Reconstrução segura para evitar múltiplos 'humanizar'
+        # Reconstrução segura: ignora chaves desconhecidas (config de outra versão)
+        campos_app = {f.name for f in fields(AppConfig)}
+        campos_hum = {f.name for f in fields(HumanizarConfig)}
+
         base = asdict(self.config)
-        base.update({k: v for k, v in data.items() if k != "humanizar"})
-        human_data = data.get("humanizar", {})
+        base.update({k: v for k, v in data.items() if k != "humanizar" and k in campos_app})
+        human_data = {k: v for k, v in (data.get("humanizar") or {}).items() if k in campos_hum}
         base["humanizar"] = HumanizarConfig(**human_data)
         self.config = AppConfig(**base)
 
@@ -179,6 +255,8 @@ class PosicoesManager:
         self.pos_letras = (692, 594)
         self.pos_chatbox = (838, 953)
         self.turn_bar_rect = (600, 1010, 240, 32)  # x, y, width, height
+        self.letras_rect = None      # x, y, w, h – região da sílaba (modo OCR)
+        self.resolucao = None        # resolução em que as posições foram calibradas
 
     def load(self):
         if os.path.exists(self.path):
@@ -187,13 +265,19 @@ class PosicoesManager:
             self.pos_letras = tuple(data.get("letras", self.pos_letras))
             self.pos_chatbox = tuple(data.get("chatbox", self.pos_chatbox))
             self.turn_bar_rect = tuple(data.get("turn_bar", self.turn_bar_rect))
+            lr = data.get("letras_rect")
+            self.letras_rect = tuple(lr) if lr else None
+            res = data.get("resolucao")
+            self.resolucao = tuple(res) if res else None
 
     def save(self):
         with open(self.path, "w", encoding="utf-8") as f:
             json.dump({
                 "letras": self.pos_letras,
                 "chatbox": self.pos_chatbox,
-                "turn_bar": self.turn_bar_rect
+                "turn_bar": self.turn_bar_rect,
+                "letras_rect": self.letras_rect,
+                "resolucao": self.resolucao,
             }, f, ensure_ascii=False, indent=2)
 
 
@@ -204,7 +288,8 @@ class PosicoesManager:
 class Dicionario:
     def __init__(self):
         self.palavras = []
-        self.blacklist = set()
+        self.blacklist = set()      # blacklist manual do usuário
+        self.rejeitadas = set()     # aprendidas: o JKLM não aceitou
 
     def carregar(self, caminho):
         self.palavras = []
@@ -218,28 +303,61 @@ class Dicionario:
         return True
 
     def carregar_blacklist(self, path=BLACKLIST_FILE):
-        self.blacklist = set()
+        self.blacklist = self._ler_lista(path)
+
+    def carregar_rejeitadas(self, path=REJEITADAS_FILE):
+        self.rejeitadas = self._ler_lista(path)
+
+    @staticmethod
+    def _ler_lista(path):
+        itens = set()
         if os.path.exists(path):
             with open(path, "r", encoding="utf-8") as f:
                 for line in f:
                     w = line.strip().lower()
-                    if w:
-                        self.blacklist.add(w)
+                    if w and not w.startswith("#"):
+                        itens.add(w)
+        return itens
 
-    def filtrar(self, frag):
+    def registrar_rejeitada(self, palavra, path=REJEITADAS_FILE):
+        """Marca uma palavra como desconhecida pelo jogo e persiste em disco."""
+        palavra = palavra.lower().strip()
+        if not palavra or palavra in self.rejeitadas:
+            return False
+        self.rejeitadas.add(palavra)
+        try:
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(palavra + "\n")
+        except Exception:
+            return False
+        return True
+
+    def filtrar(self, frag, excluir=None):
+        """Palavras que contêm a sílaba, sem blacklist/rejeitadas/já usadas."""
         frag = frag.lower()
-        return [w for w in self.palavras if frag in w and w not in self.blacklist]
+        excluir = excluir or frozenset()
+        return [w for w in self.palavras
+                if frag in w
+                and w not in self.blacklist
+                and w not in self.rejeitadas
+                and w not in excluir]
 
 
 class Selecionador:
     def __init__(self, cfg: AppConfig):
         self.cfg = cfg
-        self.recentes = deque(maxlen=cfg.cooldown_repeticao)
-        self.frequencia = {}  # contagem de uso por palavra
-        self.letras_usadas = set()
+        self.recentes = deque(maxlen=max(1, cfg.cooldown_repeticao))
+        self.frequencia = {}        # contagem de uso por palavra (sessão)
+        self.letras_usadas = set()  # progresso rumo à vida extra
         self.alfabeto_completado = 0
+        self.usadas_partida = set() # o JKLM recusa repetição na mesma partida
 
-    def _score_base(self, palavra, criterio, frag):
+    # ---------- Pontuação ----------
+    def _letras_novas(self, palavra):
+        letras = set(c for c in palavra if c.isalpha()) - IGNORADAS_ALFABETO
+        return len(letras - self.letras_usadas)
+
+    def _score_base(self, palavra, criterio, frag, folga=1.0):
         if criterio == Modo.CURTA.value:
             base = 1.0 / (len(palavra) + 1e-3)
         elif criterio == Modo.LONGA.value:
@@ -247,8 +365,15 @@ class Selecionador:
         else:
             base = 1.0
 
-        if palavra.startswith(frag):
-            base *= 1.25
+        if self.cfg.preferir_prefixo and palavra.startswith(frag):
+            base *= max(1.0, self.cfg.peso_prefixo)
+
+        # Caça ao alfabeto embutida nos modos normais: só quando sobra tempo.
+        # 'folga' vai de 0 (bomba estourando) a 1 (turno acabou de começar).
+        if self.cfg.alfabeto_hibrido and folga > 0:
+            novas = self._letras_novas(palavra)
+            if novas:
+                base *= 1.0 + (self.cfg.peso_letras_novas * folga * novas / 5.0)
 
         if self.cfg.penaliza_repetidas:
             freq = self.frequencia.get(palavra, 0)
@@ -260,39 +385,51 @@ class Selecionador:
         return base
 
     def _score_alfabeto(self, palavra):
-        letras = set([c for c in palavra if c.isalpha()]) - IGNORADAS_ALFABETO
-        novas = len([c for c in letras if c not in self.letras_usadas])
-        return novas + (len(palavra) * 0.05)
+        return self._letras_novas(palavra) + (len(palavra) * 0.05)
 
-    def escolher(self, candidatos, modo: str, frag: str):
+    def escolher(self, candidatos, modo: str, frag: str, folga: float = 1.0):
+        """Escolhe uma palavra entre as candidatas.
+
+        folga: 1.0 = turno recém-começado, 0.0 = sem tempo (prioriza velocidade).
+        """
         if not candidatos:
             return None
         frag = frag.lower()
-        scored = []
+        folga = clamp(folga, 0.0, 1.0)
+
         if modo == Modo.ALFABETO.value:
-            for w in candidatos:
-                scored.append((w, self._score_alfabeto(w)))
+            scored = [(w, self._score_alfabeto(w)) for w in candidatos]
         else:
-            for w in candidatos:
-                scored.append((w, self._score_base(w, modo, frag)))
+            scored = [(w, self._score_base(w, modo, frag, folga)) for w in candidatos]
 
         scored.sort(key=lambda x: x[1], reverse=True)
         top_n = max(1, min(self.cfg.mostrar_top_n if self.cfg.mostrar_top_n > 0 else 1, len(scored)))
         top = scored[:top_n]
         pesos = np.array([max(1e-3, s) for _, s in top], dtype=float)
         pesos = pesos / pesos.sum()
-        escolha = random.choices([w for w, _ in top], weights=pesos, k=1)[0]
-        return escolha
+        return random.choices([w for w, _ in top], weights=pesos, k=1)[0]
 
+    # ---------- Estado ----------
     def registrar_uso(self, palavra, modo: str):
         self.frequencia[palavra] = self.frequencia.get(palavra, 0) + 1
         self.recentes.append(palavra)
-        if modo == Modo.ALFABETO.value:
-            letras = set([c for c in palavra if c.isalpha()]) - IGNORADAS_ALFABETO
-            self.letras_usadas.update(letras)
-            if len(self.letras_usadas) >= 23:
-                self.alfabeto_completado += 1
-                self.letras_usadas.clear()
+        self.usadas_partida.add(palavra)
+
+        letras = set(c for c in palavra if c.isalpha()) - IGNORADAS_ALFABETO
+        self.letras_usadas.update(letras)
+        if len(self.letras_usadas) >= len(LETRAS_ALFABETO):
+            self.alfabeto_completado += 1
+            self.letras_usadas.clear()
+
+    def bloqueadas(self):
+        """Palavras que o jogo recusaria agora por já terem sido usadas."""
+        return self.usadas_partida if self.cfg.bloquear_usadas_na_partida else frozenset()
+
+    def nova_partida(self):
+        """Zera o que vale por partida (mantém estatísticas da sessão)."""
+        self.usadas_partida.clear()
+        self.letras_usadas.clear()
+        self.recentes.clear()
 
 
 # ==============================
@@ -309,6 +446,24 @@ class Capturador:
         self.turn_bar_reference = None
         self._last_turn_capture = 0.0
         self._warned_turn_rect = False
+        self._ocr = None            # None = ainda não testado; False = indisponível
+        self._warned_ocr = False
+
+    # ---------- Diagnóstico de tela ----------
+    @staticmethod
+    def diagnostico_escala():
+        """Compara a resolução lógica (pyautogui) com a física (ImageGrab).
+
+        Divergência indica escala do Windows != 100% sem DPI awareness, que é a
+        causa mais comum de cliques e capturas caírem no lugar errado.
+        """
+        try:
+            logica = tuple(pyautogui.size())
+            fisica = ImageGrab.grab().size
+        except Exception:
+            return None
+        fator = (fisica[0] / logica[0]) if logica[0] else 1.0
+        return {"logica": logica, "fisica": fisica, "fator": fator, "ok": abs(fator - 1.0) < 0.01}
 
     def detectar_chatbox(self, refresh_reference=False):
         # Se não existir template, assume turno
@@ -345,7 +500,9 @@ class Capturador:
         except Exception as exc:
             self.log(f"Falha ao capturar barra de turno: {exc}")
             return None
-        return cv2.cvtColor(np.array(shot), cv2.COLOR_BGR2GRAY)
+        # Mantido em cores: o método 'pixel' converte para cinza na comparação
+        # (mesma conta de antes) e o método 'cor' usa os canais.
+        return np.array(shot.convert("RGB"))
 
     def _update_turn_reference(self):
         img = self.capturar_barra_turno()
@@ -358,11 +515,47 @@ class Capturador:
         if self.turn_bar_reference is None:
             return 1.0
         ref = self.turn_bar_reference
-        if atual.shape != ref.shape:
+        if atual.shape[:2] != ref.shape[:2]:
             atual = cv2.resize(atual, (ref.shape[1], ref.shape[0]))
-        diff = cv2.absdiff(ref, atual)
-        score = 1.0 - (diff.mean() / 255.0)
-        return max(0.0, min(1.0, score))
+
+        metodo = self.cfg.turn_bar_metodo
+        if metodo == MetodoTurno.PIXEL.value:
+            return self._score_pixel(ref, atual)
+        if metodo == MetodoTurno.COR.value:
+            return self._score_cor(ref, atual)
+        return (self._score_pixel(ref, atual) + self._score_cor(ref, atual)) / 2.0
+
+    @staticmethod
+    def _score_pixel(ref, atual):
+        """Diferença média de pixels (sensível a qualquer mudança, inclusive a barra andando)."""
+        a = cv2.cvtColor(ref, cv2.COLOR_BGR2GRAY) if ref.ndim == 3 else ref
+        b = cv2.cvtColor(atual, cv2.COLOR_BGR2GRAY) if atual.ndim == 3 else atual
+        return clamp(1.0 - (cv2.absdiff(a, b).mean() / 255.0), 0.0, 1.0)
+
+    @staticmethod
+    def _score_cor(ref, atual):
+        """Correlação de histograma HSV: tolera a barra encolher, acusa troca de cor/jogador."""
+        if ref.ndim != 3 or atual.ndim != 3:
+            return Capturador._score_pixel(ref, atual)
+        hists = []
+        for img in (ref, atual):
+            hsv = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
+            h = cv2.calcHist([hsv], [0, 1], None, [30, 32], [0, 180, 0, 256])
+            hists.append(cv2.normalize(h, h).flatten())
+        return clamp(float(cv2.compareHist(hists[0], hists[1], cv2.HISTCMP_CORREL)), 0.0, 1.0)
+
+    def turno_ativo(self):
+        """Checagem leve de 'ainda é a minha vez' (sem mexer o mouse nem a referência).
+
+        Usada para descobrir se a palavra enviada foi aceita: se o turno continua
+        sendo seu alguns instantes após o ENTER, o jogo recusou a palavra.
+        """
+        if not self.detectar_chatbox():
+            return False
+        atual = self.capturar_barra_turno()
+        if atual is None or self.turn_bar_reference is None:
+            return False
+        return self._similaridade_turno(atual) >= self.cfg.turn_bar_threshold
 
     def confirmar_turno_para_envio(self):
         original_pos = None
@@ -405,14 +598,16 @@ class Capturador:
                 except Exception:
                     pass
 
+    # ---------- Captura da sílaba ----------
     def capturar_letras(self):
-        x, y = self.pos.pos_letras
-        pyautogui.doubleClick(x=x, y=y)
-        time.sleep(self.cfg.delay_pos_copiar_ms / 1000.0)
-        pyautogui.hotkey('ctrl', 'c')
-        time.sleep(self.cfg.delay_pos_copiar_ms / 1000.0)
+        bruto = None
+        if self.cfg.metodo_captura == MetodoCaptura.OCR.value:
+            bruto = self._letras_por_ocr()
+            if bruto is None:  # OCR indisponível/sem região: cai no método antigo
+                bruto = self._letras_por_clipboard()
+        else:
+            bruto = self._letras_por_clipboard()
 
-        bruto = pyperclip.paste()
         if not bruto:
             self.contador_falhas += 1
             if self.contador_falhas > self.limite_falhas:
@@ -425,6 +620,119 @@ class Capturador:
         else:
             self.contador_falhas = 0
         return limpo
+
+    def _sequencia_de_cliques(self):
+        """Quantos cliques dar em cada tentativa da captura.
+
+        O clique duplo seleciona a palavra sob o cursor; se ele errar o glifo por
+        alguns pixels (a bomba treme e se move), nada é selecionado e o Ctrl+C não
+        copia nada. O clique triplo seleciona a linha inteira e perdoa esse erro.
+        """
+        modo = self.cfg.clique_captura
+        base = {"duplo": [2], "triplo": [3]}.get(modo, [2, 3])
+        tentativas = max(1, self.cfg.tentativas_captura)
+        seq = []
+        while len(seq) < tentativas:
+            seq.extend(base)
+        return seq[:tentativas]
+
+    def _esperar_clipboard(self, sentinela, timeout_s):
+        """Espera o Ctrl+C chegar, em vez de dormir um tempo fixo torcendo para dar certo."""
+        fim = time.time() + timeout_s
+        while time.time() < fim:
+            try:
+                atual = pyperclip.paste()
+            except Exception:
+                atual = sentinela
+            if atual and atual != sentinela:
+                return atual
+            time.sleep(0.015)
+        return None
+
+    def _letras_por_clipboard(self):
+        """Seleciona a sílaba e copia, com verificação real de sucesso e novas tentativas."""
+        anterior = None
+        if self.cfg.preservar_clipboard:
+            try:
+                anterior = pyperclip.paste()
+            except Exception:
+                anterior = None
+
+        x, y = self.pos.pos_letras
+        settle = max(0.03, self.cfg.delay_pos_copiar_ms / 1000.0)
+        bruto = None
+
+        try:
+            for i, cliques in enumerate(self._sequencia_de_cliques(), start=1):
+                # Marca o clipboard: se ele continuar com a sentinela, o Ctrl+C não
+                # copiou nada — sem essa marca era impossível distinguir "falhou" de
+                # "a sílaba repetiu", e o bot acabava digitando a palavra do turno anterior.
+                try:
+                    pyperclip.copy(SENTINELA_CLIPBOARD)
+                except Exception:
+                    pass
+
+                pyautogui.moveTo(x, y, duration=0)
+                time.sleep(0.02)  # deixa o navegador registrar a posição antes do clique
+                pyautogui.click(x=x, y=y, clicks=cliques, interval=0.03)
+                time.sleep(settle)
+                pyautogui.hotkey('ctrl', 'c')
+
+                bruto = self._esperar_clipboard(SENTINELA_CLIPBOARD, settle)
+                if bruto:
+                    if i > 1:
+                        self.log(f"Captura recuperada na tentativa {i} ({cliques} cliques).")
+                    break
+                self.log(f"Nada selecionado com {cliques} cliques (tentativa {i}).")
+        finally:
+            if anterior is not None:
+                try:
+                    pyperclip.copy(anterior)
+                except Exception:
+                    pass
+
+        return bruto or ""
+
+    def _letras_por_ocr(self):
+        """Lê a sílaba direto da imagem: sem mouse, sem foco, sem clipboard."""
+        if self._ocr is False:
+            return None
+        if self._ocr is None:
+            try:
+                import pytesseract  # noqa: F401
+                pytesseract.get_tesseract_version()
+                self._ocr = pytesseract
+            except Exception as exc:
+                self._ocr = False
+                if not self._warned_ocr:
+                    self._warned_ocr = True
+                    self.log(f"OCR indisponível ({exc.__class__.__name__}); usando duplo-clique + Ctrl+C. "
+                             f"Instale 'pytesseract' e o Tesseract para ativar.")
+                return None
+
+        rect = self.pos.letras_rect
+        if not rect or len(rect) != 4 or rect[2] <= 0 or rect[3] <= 0:
+            if not self._warned_ocr:
+                self._warned_ocr = True
+                self.log("Região das letras não capturada (Setup > Região da sílaba); usando clipboard.")
+            return None
+
+        x, y, w, h = rect
+        try:
+            img = np.array(ImageGrab.grab(bbox=(x, y, x + w, y + h)).convert("RGB"))
+            gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+            gray = cv2.resize(gray, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
+            _, bw = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            # A sílaba costuma ser clara sobre fundo escuro; o Tesseract espera o contrário
+            if bw.mean() < 127:
+                bw = cv2.bitwise_not(bw)
+            texto = self._ocr.image_to_string(
+                bw, config="--psm 7 -c tessedit_char_whitelist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
+            return texto.strip()
+        except Exception as exc:
+            self.log(f"Falha no OCR: {exc}. Voltando para o clipboard.")
+            self._ocr = False
+            return None
 
 
 # ==============================
@@ -744,6 +1052,57 @@ class BotCore:
         # contador de rodadas com números
         self.numeros_restantes = cfg.humanizar.numeros_rodadas
 
+        # ===== Feedback de envio =====
+        self.aceitas = 0
+        self.recusadas = 0
+        self.strikes = {}            # palavra -> nº de recusas (2 = vai para rejeitadas.txt)
+        self.partidas = 0
+
+        # ===== Controle de turno =====
+        self._turno_ativo = False
+        self._turno_inicio = 0.0
+        self._ultimo_turno_em = time.time()
+
+    # ---------- Tempo da rodada ----------
+    def _tempo_no_turno(self):
+        return (time.time() - self._turno_inicio) if self._turno_ativo else 0.0
+
+    def _orcamento_restante(self):
+        """Quanto ainda dá para gastar nesta rodada, descontando o tempo já perdido."""
+        return max(0.0, self.cfg.limite_tempo_round_s - self._tempo_no_turno())
+
+    def _folga(self):
+        """0.0 = sem tempo, 1.0 = turno recém-começado (usada na escolha da palavra)."""
+        limite = max(0.1, self.cfg.limite_tempo_round_s)
+        return clamp(self._orcamento_restante() / limite, 0.0, 1.0)
+
+    def _marcar_turno(self, ativo: bool):
+        """Detecta a virada 'não é minha vez' -> 'é minha vez' para cronometrar."""
+        if ativo and not self._turno_ativo:
+            self._turno_inicio = time.time()
+            self._ultimo_turno_em = time.time()
+        self._turno_ativo = ativo
+
+    # ---------- Partida ----------
+    def nova_partida(self, motivo="manual"):
+        self.selector.nova_partida()
+        self.strikes.clear()
+        self.partidas += 1
+        self._log(f"Nova partida ({motivo}): palavras usadas e alfabeto zerados.")
+
+    def _checar_inatividade(self):
+        if not self.cfg.auto_nova_partida:
+            return
+        parado_ha = time.time() - self._ultimo_turno_em
+        if parado_ha >= self.cfg.inatividade_nova_partida_s and self.selector.usadas_partida:
+            self.nova_partida(f"{int(parado_ha)}s sem turnos")
+            self._ultimo_turno_em = time.time()
+
+    @property
+    def taxa_aceitacao(self):
+        total = self.aceitas + self.recusadas
+        return (self.aceitas / total * 100.0) if total else 0.0
+
     def _log(self, msg: str):
         self.ui_log(msg)
         if self.cfg.salvar_log:
@@ -756,7 +1115,9 @@ class BotCore:
             self._log(f"Arquivo de dicionário não encontrado: {self.cfg.caminho_dicionario}")
             return False
         self.dict.carregar_blacklist(BLACKLIST_FILE)
-        self._log(f"Dicionário carregado ({len(self.dict.palavras)} palavras). Blacklist: {len(self.dict.blacklist)}")
+        self.dict.carregar_rejeitadas(REJEITADAS_FILE)
+        self._log(f"Dicionário carregado ({len(self.dict.palavras)} palavras). "
+                  f"Blacklist: {len(self.dict.blacklist)} | Recusadas pelo jogo: {len(self.dict.rejeitadas)}")
         return True
 
     def set_modo(self, modo: str):
@@ -797,139 +1158,197 @@ class BotCore:
                     self._log("Processo parado.")
                     return
 
-            if self.capt.detectar_chatbox(refresh_reference=True):
+            meu_turno = self.capt.detectar_chatbox(refresh_reference=True)
+            self._marcar_turno(meu_turno)
+
+            if meu_turno:
                 frag = self.capt.capturar_letras()
                 if frag:
                     self._log(f"Letras detectadas: {frag}")
-                    candidatos = self.dict.filtrar(frag)
-                    if not candidatos:
-                        # Regra: quando não achar no dicionário, fala a frase definida
-                        self._log("Nenhuma palavra encontrada – enviando frase padrão.")
-                        ok_send = self.typer.digitar_quick(FRASE_QUANDO_NAO_TEM, self.pos.pos_chatbox)
-                        if not ok_send:
-                            self._log("Envio da frase padrão cancelado (não era mais a sua vez).")
-                    else:
-                        # preferir palavras que comecem com as 3 primeiras letras do frag
-                        use_pensar3 = False
-                        if len(frag) >= 3 and self.cfg.humanizar.pensar_3letras:
-                            prefix = frag[:3]
-                            candidatos_prefix = [w for w in candidatos if w.startswith(prefix)]
-                            if candidatos_prefix:
-                                candidatos = candidatos_prefix
-                                use_pensar3 = True
-
-                        escolha = self.selector.escolher(candidatos, self.modo_atual, frag)
-                        if not escolha:
-                            time.sleep(self.cfg.delay_ciclo_ms / 1000.0)
-                            continue
-
-                        if self.cfg.mostrar_top_n > 0:
-                            top_preview = ", ".join(candidatos[:min(self.cfg.mostrar_top_n, len(candidatos))])
-                            self._log(f"Top opções: {top_preview}")
-                        self._log(f"Escolhida: {escolha}")
-
-                        # triggers da rodada
-                        trig_frase, trig_ensaio, trig_falha, trig_erro_enter = self._select_triggers()
-
-                        # Números: válidos nesta rodada?
-                        use_nums_this_round = self.cfg.humanizar.inserir_numeros and (self.numeros_restantes > 0)
-
-                        # estimativa de tempo (inclui TUDO da humanização)
-                        est, breakdown = self.typer.estimate_round_time(
-                            escolha,
-                            use_frase=trig_frase,
-                            use_ensaio=trig_ensaio,
-                            use_falha=trig_falha,
-                            use_erro_enter=trig_erro_enter,
-                            use_pensar3=use_pensar3,
-                            include_nums=use_nums_this_round
-                        )
-                        flags_txt = []
-                        if trig_frase: flags_txt.append("frase")
-                        if trig_ensaio: flags_txt.append("ensaio")
-                        if trig_falha: flags_txt.append("falha")
-                        if trig_erro_enter: flags_txt.append("errEnter")
-                        if use_pensar3: flags_txt.append("pensar3")
-                        flags_str = ", ".join(flags_txt) if flags_txt else "nenhum"
-
-                        bd_txt = " | ".join([f"{k}={v:.2f}s" for k, v in breakdown.items() if v > 0.0]) or "typing=0.00s"
-                        self._log(f"Estimativa do round: ~{est:.2f}s | flags: {flags_str} | breakdown: {bd_txt}")
-
-                        fast_path = est > self.cfg.limite_tempo_round_s
-                        if fast_path:
-                            self._log(f"FAST PATH: {est:.2f}s > limite {self.cfg.limite_tempo_round_s:.2f}s → enviar direto a correta.")
-                            trig_frase = trig_ensaio = trig_falha = trig_erro_enter = False
-                            use_nums_this_round = False  # sem números para acelerar
-                            use_pensar3 = False
-
-                        # executa
-                        try:
-                            if trig_falha:
-                                enviada = self.typer.falha_proposital(escolha, self.pos.pos_chatbox)
-                                if enviada is None:
-                                    self._log("Falha proposital cancelada (não era a sua vez no ENTER).")
-                                else:
-                                    self._log(f"Falha proposital enviada: {enviada}")
-                                    self.erros_propositais += 1
-                                    self.acertos_consecutivos = 0
-
-                            elif trig_erro_enter:
-                                self._log("Enviando UMA letra errada + ENTER; depois corrigindo.")
-                                ok = self.typer.erro_enter_e_corrige(escolha, self.pos.pos_chatbox)
-                                if ok:
-                                    self.selector.registrar_uso(escolha, self.modo_atual)
-                                    self.historico.append(escolha)
-                                    self.acertos_consecutivos += 1
-                                    if use_nums_this_round:
-                                        self.numeros_restantes = max(0, self.numeros_restantes - 1)
-                                        if self.numeros_restantes == 0:
-                                            self.cfg.humanizar.inserir_numeros = False
-                                            self._log("Rodadas com números concluídas. Inserção de números desativada.")
-                                else:
-                                    self._log("Fluxo errEnter cancelado (não era sua vez em algum ENTER).")
-
-                            else:
-                                if trig_frase:
-                                    self._log("Frase engraçada & apagar (simulação).")
-                                    self.typer.frase_engracada_e_apaga(self.pos.pos_chatbox)
-
-                                if trig_ensaio:
-                                    self._log("Ensaio/rascunho & apagar (simulação).")
-                                    self.typer.ensaiar_palavra_e_apagar(escolha, self.pos.pos_chatbox)
-
-                                if fast_path:
-                                    ok_send = self.typer.digitar_quick(escolha, self.pos.pos_chatbox)
-                                else:
-                                    if use_pensar3 and len(escolha) >= 3:
-                                        self._log(f"Pensar após 3 letras: pausa {self.cfg.humanizar.pensar_3letras_pausa_ms} ms.")
-                                        ok_send = self.typer.digitar_pensando_3(
-                                            escolha,
-                                            self.pos.pos_chatbox,
-                                            think_ms=self.cfg.humanizar.pensar_3letras_pausa_ms,
-                                            override_nums=use_nums_this_round
-                                        )
-                                    else:
-                                        ok_send = self.typer.digitar(escolha, self.pos.pos_chatbox, override_nums=use_nums_this_round)
-
-                                if ok_send:
-                                    self.selector.registrar_uso(escolha, self.modo_atual)
-                                    self.historico.append(escolha)
-                                    self.acertos_consecutivos += 1
-                                    if use_nums_this_round:
-                                        self.numeros_restantes = max(0, self.numeros_restantes - 1)
-                                        if self.numeros_restantes == 0:
-                                            self.cfg.humanizar.inserir_numeros = False
-                                            self._log("Rodadas com números concluídas. Inserção de números desativada.")
-                                else:
-                                    self._log("Envio cancelado no ENTER (não era mais a sua vez).")
-
-                        except Exception as e:
-                            self._log(f"Falha ao digitar: {e}")
-
+                    try:
+                        self._jogar_rodada(frag)
+                    except Exception as e:
+                        self._log(f"Falha ao jogar a rodada: {e}")
                 else:
                     self._log("Captura vazia; tentando novamente.")
+            else:
+                self._checar_inatividade()
 
             time.sleep(self.cfg.delay_ciclo_ms / 1000.0)
+
+    # ---------- Rodada ----------
+    def _jogar_rodada(self, frag):
+        """Tenta palavras até uma ser aceita pelo jogo (ou acabarem as tentativas)."""
+        excluidas = set()
+        tentativas = max(1, self.cfg.max_tentativas_rodada)
+
+        for tentativa in range(1, tentativas + 1):
+            with self.lock:
+                if not self.executando:
+                    return
+
+            candidatos = self.dict.filtrar(frag, excluir=set(self.selector.bloqueadas()) | excluidas)
+            if not candidatos:
+                if tentativa == 1:
+                    # Regra: quando não achar no dicionário, fala a frase definida
+                    self._log("Nenhuma palavra encontrada – enviando frase padrão.")
+                    if not self.typer.digitar_quick(FRASE_QUANDO_NAO_TEM, self.pos.pos_chatbox):
+                        self._log("Envio da frase padrão cancelado (não era mais a sua vez).")
+                else:
+                    self._log(f"Sem mais candidatos para '{frag}' nesta rodada.")
+                return
+
+            escolha = self.selector.escolher(candidatos, self.modo_atual, frag, folga=self._folga())
+            if not escolha:
+                return
+
+            if self.cfg.mostrar_top_n > 0 and tentativa == 1:
+                top_preview = ", ".join(candidatos[:min(self.cfg.mostrar_top_n, len(candidatos))])
+                self._log(f"Top opções ({len(candidatos)} candidatas): {top_preview}")
+
+            sufixo = f"  (tentativa {tentativa}/{tentativas})" if tentativa > 1 else ""
+            self._log(f"Escolhida: {escolha}{sufixo}")
+
+            resultado = self._enviar_palavra(escolha, frag, apressado=(tentativa > 1))
+
+            if resultado == "aceita":
+                return
+            if resultado == "cancelado":
+                return
+            if resultado == "falha_proposital":
+                continue  # erro de propósito: não conta como recusa da palavra
+            # recusada
+            excluidas.add(escolha)
+            self._registrar_recusa(escolha)
+
+        self._log(f"{tentativas} tentativas sem sucesso para '{frag}'.")
+
+    def _enviar_palavra(self, escolha, frag, apressado=False):
+        """Envia a palavra com (ou sem) encenação e confere se o jogo aceitou.
+
+        Retorna: 'aceita' | 'recusada' | 'cancelado' | 'falha_proposital'.
+        """
+        h = self.cfg.humanizar
+
+        if apressado:
+            trig_frase = trig_ensaio = trig_falha = trig_erro_enter = False
+        else:
+            trig_frase, trig_ensaio, trig_falha, trig_erro_enter = self._select_triggers()
+
+        use_nums = h.inserir_numeros and (self.numeros_restantes > 0) and not apressado
+        # "Pensar após 3 letras" agora só reage à palavra escolhida – não filtra mais
+        # o conjunto de candidatas (isso empobrecia demais a seleção).
+        use_pensar3 = (not apressado and h.pensar_3letras
+                       and len(frag) >= 3 and escolha.startswith(frag[:3]))
+
+        est, breakdown = self.typer.estimate_round_time(
+            escolha,
+            use_frase=trig_frase,
+            use_ensaio=trig_ensaio,
+            use_falha=trig_falha,
+            use_erro_enter=trig_erro_enter,
+            use_pensar3=use_pensar3,
+            include_nums=use_nums,
+        )
+
+        flags = [nome for nome, on in (("frase", trig_frase), ("ensaio", trig_ensaio),
+                                       ("falha", trig_falha), ("errEnter", trig_erro_enter),
+                                       ("pensar3", use_pensar3)) if on]
+        bd_txt = " | ".join(f"{k}={v:.2f}s" for k, v in breakdown.items() if v > 0.0) or "typing=0.00s"
+
+        # Orçamento real: desconta o tempo já gasto desde que o turno virou meu
+        orcamento = self._orcamento_restante()
+        gasto = self._tempo_no_turno()
+        self._log(f"Estimativa: ~{est:.2f}s | sobra ~{orcamento:.2f}s (gastos {gasto:.2f}s) | "
+                  f"flags: {', '.join(flags) or 'nenhum'} | {bd_txt}")
+
+        fast_path = apressado or est > orcamento
+        if fast_path and not apressado:
+            self._log(f"FAST PATH: {est:.2f}s > orçamento {orcamento:.2f}s → enviando direto.")
+        if fast_path:
+            trig_frase = trig_ensaio = trig_falha = trig_erro_enter = False
+            use_nums = False
+            use_pensar3 = False
+
+        # ----- execução -----
+        if trig_falha:
+            enviada = self.typer.falha_proposital(escolha, self.pos.pos_chatbox)
+            if enviada is None:
+                self._log("Falha proposital cancelada (não era a sua vez no ENTER).")
+                return "cancelado"
+            self._log(f"Falha proposital enviada: {enviada}")
+            self.erros_propositais += 1
+            self.acertos_consecutivos = 0
+            return "falha_proposital"
+
+        if trig_erro_enter:
+            self._log("Enviando UMA letra errada + ENTER; depois corrigindo.")
+            if not self.typer.erro_enter_e_corrige(escolha, self.pos.pos_chatbox):
+                self._log("Fluxo errEnter cancelado (não era sua vez em algum ENTER).")
+                return "cancelado"
+        else:
+            if trig_frase:
+                self._log("Frase engraçada & apagar (simulação).")
+                self.typer.frase_engracada_e_apaga(self.pos.pos_chatbox)
+            if trig_ensaio:
+                self._log("Ensaio/rascunho & apagar (simulação).")
+                self.typer.ensaiar_palavra_e_apagar(escolha, self.pos.pos_chatbox)
+
+            if fast_path:
+                ok_send = self.typer.digitar_quick(escolha, self.pos.pos_chatbox)
+            elif use_pensar3 and len(escolha) >= 3:
+                self._log(f"Pensar após 3 letras: pausa {h.pensar_3letras_pausa_ms} ms.")
+                ok_send = self.typer.digitar_pensando_3(
+                    escolha, self.pos.pos_chatbox,
+                    think_ms=h.pensar_3letras_pausa_ms, override_nums=use_nums)
+            else:
+                ok_send = self.typer.digitar(escolha, self.pos.pos_chatbox, override_nums=use_nums)
+
+            if not ok_send:
+                self._log("Envio cancelado no ENTER (não era mais a sua vez).")
+                return "cancelado"
+
+        # ----- o jogo aceitou? -----
+        if not self._verificar_aceite():
+            return "recusada"
+
+        self._registrar_aceite(escolha, use_nums)
+        return "aceita"
+
+    def _verificar_aceite(self):
+        """Se o turno continua sendo meu logo após o ENTER, a palavra foi recusada."""
+        if not self.cfg.verificar_envio or self.cfg.modo_teste:
+            return True
+        time.sleep(max(0.05, self.cfg.delay_verificacao_ms / 1000.0))
+        return not self.capt.turno_ativo()
+
+    def _registrar_aceite(self, palavra, use_nums):
+        self.aceitas += 1
+        self.selector.registrar_uso(palavra, self.modo_atual)
+        self.historico.append(palavra)
+        self.acertos_consecutivos += 1
+        self._marcar_turno(False)  # o turno passou para o próximo jogador
+
+        if use_nums:
+            self.numeros_restantes = max(0, self.numeros_restantes - 1)
+            if self.numeros_restantes == 0:
+                self.cfg.humanizar.inserir_numeros = False
+                self._log("Rodadas com números concluídas. Inserção de números desativada.")
+
+    def _registrar_recusa(self, palavra):
+        """Duas recusas = o JKLM não conhece a palavra; vai para rejeitadas.txt."""
+        self.recusadas += 1
+        self.acertos_consecutivos = 0
+        n = self.strikes.get(palavra, 0) + 1
+        self.strikes[palavra] = n
+
+        if n >= 2 and self.cfg.aprender_rejeitadas:
+            if self.dict.registrar_rejeitada(palavra, REJEITADAS_FILE):
+                self._log(f"'{palavra}' recusada {n}x → aprendida em {REJEITADAS_FILE}.")
+            else:
+                self._log(f"'{palavra}' recusada {n}x (já estava na lista).")
+        else:
+            self._log(f"'{palavra}' recusada pelo jogo; tentando outra.")
 
 
 # ==============================
@@ -1289,6 +1708,57 @@ class StatCard(tk.Frame):
         self.val.configure(text=str(value))
 
 
+class AlfabetoGrid(tk.Frame):
+    """Progresso rumo à vida extra: as 23 letras úteis acendem conforme são usadas."""
+
+    def __init__(self, master, bg=T.SURFACE, colunas=8):
+        super().__init__(master, bg=bg)
+        self._chips = {}
+        for i, ch in enumerate(LETRAS_ALFABETO):
+            lbl = tk.Label(self, text=ch.upper(), bg=T.SURFACE_2, fg=T.TEXT_MUTE,
+                           font=("Consolas", 10, "bold"), pady=4)
+            lbl.grid(row=i // colunas, column=i % colunas, padx=2, pady=2, sticky="nsew")
+            self._chips[ch] = lbl
+        for c in range(colunas):
+            self.columnconfigure(c, weight=1)
+
+    def atualizar(self, usadas):
+        for ch, lbl in self._chips.items():
+            if ch in usadas:
+                lbl.configure(bg=T.SUCCESS, fg="#04211a")
+            else:
+                lbl.configure(bg=T.SURFACE_2, fg=T.TEXT_MUTE)
+
+
+# Perfis prontos: valores no formato dos widgets (ms, %, s)
+PRESETS = {
+    "Seguro": {
+        "descricao": "Parece gente de verdade. Erra, hesita e conversa — mais lento.",
+        "perfil": VelocidadePerfil.ALEATORIA.value,
+        "delay_letra": 55, "chance_erro": 6, "var_delay": 20,
+        "pausa_cada": 4, "pausa_min": 0.030, "pausa_max": 0.120,
+        "falha": 3, "err_enter": 6, "frase": 20, "ensaio": 25,
+        "pensar3": True, "pensar_ms": 500, "limite": 6.0,
+    },
+    "Equilibrado": {
+        "descricao": "Humanização discreta sem perder rodadas. Bom padrão.",
+        "perfil": VelocidadePerfil.ALEATORIA.value,
+        "delay_letra": 20, "chance_erro": 3, "var_delay": 12,
+        "pausa_cada": 4, "pausa_min": 0.020, "pausa_max": 0.070,
+        "falha": 1, "err_enter": 3, "frase": 8, "ensaio": 12,
+        "pensar3": True, "pensar_ms": 350, "limite": 4.0,
+    },
+    "Agressivo": {
+        "descricao": "Sem encenação: digita e manda. Para ganhar, não para disfarçar.",
+        "perfil": VelocidadePerfil.RAPIDA.value,
+        "delay_letra": 5, "chance_erro": 0, "var_delay": 5,
+        "pausa_cada": 8, "pausa_min": 0.010, "pausa_max": 0.030,
+        "falha": 0, "err_enter": 0, "frase": 0, "ensaio": 0,
+        "pensar3": False, "pensar_ms": 200, "limite": 2.0,
+    },
+}
+
+
 class ScrollArea(tk.Frame):
     """Área rolável com scroll pelo mouse."""
 
@@ -1381,6 +1851,9 @@ class AppUI:
         self.pos_mgr = PosicoesManager()
         self.pos_mgr.load()
 
+        # Precisa acontecer antes de qualquer janela existir
+        self._dpi_msg = aplicar_dpi_awareness(self.cfg_mgr.config.dpi_aware)
+
         self.root = tk.Tk()
         self.root.title(APP_NAME)
         self.root.configure(bg=T.BG)
@@ -1409,6 +1882,9 @@ class AppUI:
         self._refresh_stats()
 
         self.enqueue_log("Configurações e posições carregadas.")
+        if self._dpi_msg:
+            self.enqueue_log(self._dpi_msg)
+        self.root.after(400, self._rodar_diagnostico)
         threading.Thread(target=self._preload_dicionario, daemon=True).start()
         self.root.mainloop()
 
@@ -1491,8 +1967,9 @@ class AppUI:
         footer = tk.Frame(sb, bg=T.SIDEBAR)
         footer.pack(side="bottom", fill="x", padx=20, pady=18)
         tk.Frame(footer, bg=T.BORDER, height=1).pack(fill="x", pady=(0, 12))
-        tk.Label(footer, text="F8  ·  parar tudo", bg=T.SIDEBAR, fg=T.TEXT_MUTE, font=T.FONT_SM).pack(anchor="w")
-        tk.Label(footer, text="Ctrl+S  ·  salvar", bg=T.SIDEBAR, fg=T.TEXT_MUTE, font=T.FONT_SM).pack(anchor="w")
+        for atalho in ("F8  ·  parar tudo", "F7  ·  trocar modo",
+                       "F6  ·  nova partida", "Ctrl+S  ·  salvar"):
+            tk.Label(footer, text=atalho, bg=T.SIDEBAR, fg=T.TEXT_MUTE, font=T.FONT_SM).pack(anchor="w")
         self.lbl_dev = tk.Label(footer, text="dev @lucasleao18", bg=T.SIDEBAR, fg=T.ACCENT, font=T.FONT_SM)
         self.lbl_dev.pack(anchor="w", pady=(10, 0))
 
@@ -1611,10 +2088,16 @@ class AppUI:
         self.btn_parar = Btn(btns, "Parar  (F8)", command=self._parar, variant="danger", icon="■", padx=30, pady=11)
         self.btn_parar.pack(side="left", padx=10)
         self.btn_parar.set_enabled(False)
-        Btn(btns, "Recarregar dicionário", command=self._recarregar_dicionario, variant="ghost", icon="⟳",
-            padx=18, pady=11).pack(side="left")
 
-        tk.Label(cbody, text="Deixe a janela do jogo em foco antes de iniciar. F8 interrompe de qualquer lugar.",
+        btns2 = tk.Frame(cbody, bg=T.SURFACE)
+        btns2.pack(fill="x", pady=(10, 0))
+        Btn(btns2, "Nova partida  (F6)", command=self._nova_partida, variant="ghost", icon="⟲",
+            padx=16, pady=8).pack(side="left")
+        Btn(btns2, "Recarregar dicionário", command=self._recarregar_dicionario, variant="ghost", icon="⟳",
+            padx=16, pady=8).pack(side="left", padx=10)
+
+        tk.Label(cbody, text="Deixe a janela do jogo em foco antes de iniciar.   "
+                             "F8 para tudo  ·  F7 troca de modo  ·  F6 nova partida.",
                  bg=T.SURFACE, fg=T.TEXT_MUTE, font=T.FONT_SM).pack(anchor="w", pady=(12, 0))
 
         live, lbody = make_card(left, "Rodada atual")
@@ -1630,6 +2113,13 @@ class AppUI:
         self.card_sequencia.pack(fill="x", pady=(14, 0))
         self.card_dict = StatCard(right, "palavras no dicionário", "0", T.PURPLE)
         self.card_dict.pack(fill="x", pady=(14, 0))
+
+        alf, abody = make_card(right, "Vida extra", "Letras já usadas (K, W e Y não contam)")
+        alf.pack(fill="x", pady=(14, 0))
+        self.grid_alfabeto = AlfabetoGrid(abody)
+        self.grid_alfabeto.pack(fill="x")
+        self.lbl_alfabeto = tk.Label(abody, text="0 / 23", bg=T.SURFACE, fg=T.TEXT_DIM, font=T.FONT_SM)
+        self.lbl_alfabeto.pack(anchor="e", pady=(8, 0))
 
         tip, tbody = make_card(right, "Dica")
         tip.pack(fill="x", pady=(14, 0))
@@ -1707,6 +2197,79 @@ class AppUI:
         self.sld_turn_thr = Slider(r, 0.50, 0.99, cfg.turn_bar_threshold, decimals=2)
         self.sld_turn_thr.pack(fill="x")
 
+        r = form_row(b, "Como comparar a barra de turno",
+                     "Pixel = original; Cor = tolera a barra encolher; Híbrido = os dois")
+        self.seg_turno = Segmented(r, [("Pixel", MetodoTurno.PIXEL.value),
+                                       ("Cor", MetodoTurno.COR.value),
+                                       ("Híbrido", MetodoTurno.HIBRIDO.value)],
+                                   value=cfg.turn_bar_metodo)
+        self.seg_turno.pack(side="left")
+
+        # --- Captura da sílaba ---
+        card, b = make_card(body, "Captura da sílaba",
+                            "Como o bot lê as letras do desafio a cada turno")
+        card.pack(fill="x", pady=(18, 0))
+
+        r = form_row(b, "Método",
+                     "OCR dispensa mouse e clipboard, mas exige pytesseract + Tesseract instalados")
+        self.seg_captura = Segmented(r, [("Duplo-clique + Ctrl+C", MetodoCaptura.CLIPBOARD.value),
+                                         ("OCR da imagem", MetodoCaptura.OCR.value)],
+                                     value=cfg.metodo_captura)
+        self.seg_captura.pack(side="left")
+
+        r = form_row(b, "Preservar área de transferência",
+                     "Devolve o que você tinha copiado depois de ler a sílaba")
+        self.tgl_clip = Toggle(r, "Ativar", cfg.preservar_clipboard)
+        self.tgl_clip.pack(side="left")
+
+        r = form_row(b, "Tipo de clique para selecionar",
+                     "Triplo pega a linha inteira e erra menos; Auto tenta duplo e depois triplo")
+        self.seg_clique = Segmented(r, [("Duplo", "duplo"), ("Triplo", "triplo"), ("Auto", "auto")],
+                                    value=cfg.clique_captura)
+        self.seg_clique.pack(side="left")
+
+        r = form_row(b, "Tentativas de captura",
+                     "Repete o clique + Ctrl+C quando nada é selecionado")
+        self.stp_tent_captura = Stepper(r, 1, 6, cfg.tentativas_captura)
+        self.stp_tent_captura.pack(side="left")
+
+        self.lbl_letras_rect = self._pos_row(b, "Região da sílaba (OCR, 2 cliques)",
+                                             self.pos_mgr.letras_rect or "não capturada",
+                                             self._capturar_letras_rect)
+
+        # --- Verificação de envio ---
+        card, b = make_card(body, "Verificação e aprendizado",
+                            "O JKLM recusa palavra repetida ou fora do dicionário dele; "
+                            "aqui o bot percebe isso e reage")
+        card.pack(fill="x", pady=(18, 0))
+
+        r = form_row(b, "Conferir se a palavra foi aceita",
+                     "Se continuar sendo sua vez após o ENTER, foi recusada")
+        self.tgl_verificar = Toggle(r, "Ativar", cfg.verificar_envio)
+        self.tgl_verificar.pack(side="left")
+
+        r = form_row(b, "Espera antes de conferir")
+        self.sld_verif_ms = Slider(r, 120, 1200, cfg.delay_verificacao_ms, suffix="ms")
+        self.sld_verif_ms.pack(fill="x")
+
+        r = form_row(b, "Tentativas por rodada", "Quantas palavras tentar antes de desistir do turno")
+        self.stp_tentativas = Stepper(r, 1, 6, cfg.max_tentativas_rodada)
+        self.stp_tentativas.pack(side="left")
+
+        r = form_row(b, "Aprender palavras recusadas",
+                     f"Recusada 2x vai para {REJEITADAS_FILE} e nunca mais é usada")
+        self.tgl_aprender = Toggle(r, "Ativar", cfg.aprender_rejeitadas)
+        self.tgl_aprender.pack(side="left")
+
+        r = form_row(b, "Nova partida automática",
+                     "Zera as palavras usadas após um tempo sem turnos")
+        self.tgl_auto_partida = Toggle(r, "Ativar", cfg.auto_nova_partida)
+        self.tgl_auto_partida.pack(side="left")
+
+        r = form_row(b, "Tempo de inatividade")
+        self.sld_inatividade = Slider(r, 15, 180, cfg.inatividade_nova_partida_s, suffix="s")
+        self.sld_inatividade.pack(fill="x")
+
         # --- Posições ---
         card, b = make_card(body, "Posições na tela",
                             "Clique em «Capturar» e depois no ponto correspondente dentro do jogo")
@@ -1752,6 +2315,8 @@ class AppUI:
         self.tgl_log.grid(row=0, column=1, sticky="w", padx=(40, 0), pady=6)
         self.tgl_penaliza = Toggle(grid, "Penalizar palavras repetidas", cfg.penaliza_repetidas)
         self.tgl_penaliza.grid(row=1, column=0, sticky="w", pady=6)
+        self.tgl_bloquear_usadas = Toggle(grid, "Nunca repetir na mesma partida", cfg.bloquear_usadas_na_partida)
+        self.tgl_bloquear_usadas.grid(row=1, column=1, sticky="w", padx=(40, 0), pady=6)
 
         r = form_row(b, "Cooldown de repetição", "Não repetir palavra usada nas últimas N rodadas")
         self.stp_cool = Stepper(r, 0, 50, cfg.cooldown_repeticao)
@@ -1760,6 +2325,40 @@ class AppUI:
         r = form_row(b, "Exibir top N opções", "Quantas alternativas mostrar no console")
         self.stp_top = Stepper(r, 0, 10, cfg.mostrar_top_n)
         self.stp_top.pack(side="left")
+
+        r = form_row(b, "Preferir palavras com a sílaba no início",
+                     "Só afeta a pontuação — não descarta as demais candidatas")
+        self.tgl_prefixo = Toggle(r, "Ativar", cfg.preferir_prefixo)
+        self.tgl_prefixo.pack(side="left")
+
+        r = form_row(b, "Peso do prefixo")
+        self.sld_peso_prefixo = Slider(r, 1.0, 3.0, cfg.peso_prefixo, decimals=2)
+        self.sld_peso_prefixo.pack(fill="x")
+
+        r = form_row(b, "Caçar letras novas nos modos normais",
+                     "Busca a vida extra quando sobra tempo na rodada")
+        self.tgl_alf_hibrido = Toggle(r, "Ativar", cfg.alfabeto_hibrido)
+        self.tgl_alf_hibrido.pack(side="left")
+
+        r = form_row(b, "Peso das letras novas")
+        self.sld_peso_letras = Slider(r, 0.0, 2.0, cfg.peso_letras_novas, decimals=2)
+        self.sld_peso_letras.pack(fill="x")
+
+        # --- Sistema ---
+        card, b = make_card(body, "Sistema", "Diagnóstico de tela e compatibilidade")
+        card.pack(fill="x", pady=(18, 0))
+
+        self.lbl_diag = tk.Label(b, text="Verificando resolução…", bg=T.SURFACE, fg=T.TEXT_DIM,
+                                 font=T.FONT_SM, justify="left", wraplength=620, anchor="w")
+        self.lbl_diag.pack(anchor="w", pady=(0, 8))
+
+        r = form_row(b, "Ciência de DPI (reinicia o app)",
+                     "Só ative se as coordenadas foram calibradas com isto ligado")
+        self.tgl_dpi = Toggle(r, "Ativar", cfg.dpi_aware)
+        self.tgl_dpi.pack(side="left")
+
+        Btn(b, "Rodar diagnóstico", command=self._rodar_diagnostico, variant="ghost", icon="◍",
+            padx=16, pady=7).pack(anchor="w", pady=(10, 0))
 
         actions = tk.Frame(body, bg=T.BG)
         actions.pack(fill="x", pady=18)
@@ -1782,8 +2381,21 @@ class AppUI:
         page = ScrollArea(parent, bg=T.BG)
         body = page.body
 
-        card, b = make_card(body, "Perfil de digitação", "Como o bot distribui o tempo entre as teclas")
+        card, b = make_card(body, "Perfis prontos", "Ajusta todos os controles abaixo de uma vez")
         card.pack(fill="x")
+        linha = tk.Frame(b, bg=T.SURFACE)
+        linha.pack(fill="x")
+        for i, (nome, dados) in enumerate(PRESETS.items()):
+            col = tk.Frame(linha, bg=T.SURFACE)
+            col.grid(row=0, column=i, sticky="nsew", padx=(0 if i == 0 else 10, 0))
+            linha.columnconfigure(i, weight=1)
+            Btn(col, nome, command=lambda n=nome: self._aplicar_preset(n),
+                variant="ghost", padx=16, pady=8).pack(fill="x")
+            tk.Label(col, text=dados["descricao"], bg=T.SURFACE, fg=T.TEXT_MUTE, font=T.FONT_SM,
+                     wraplength=200, justify="left").pack(anchor="w", pady=(6, 0))
+
+        card, b = make_card(body, "Perfil de digitação", "Como o bot distribui o tempo entre as teclas")
+        card.pack(fill="x", pady=(18, 0))
 
         r = form_row(b, "Perfil de velocidade")
         self.seg_perfil = Segmented(r, [
@@ -1893,9 +2505,13 @@ class AppUI:
 
         cards2 = tk.Frame(page, bg=T.BG)
         cards2.pack(fill="x", pady=(14, 0))
+        self.st_taxa = StatCard(cards2, "taxa de aceitação", "—", T.ACCENT)
+        self.st_recusadas = StatCard(cards2, "recusadas pelo jogo", "0", T.DANGER)
+        self.st_aprendidas = StatCard(cards2, "aprendidas (fora do jogo)", "0", T.WARN)
         self.st_seq = StatCard(cards2, "acertos consecutivos", "0", T.SUCCESS)
-        self.st_nums = StatCard(cards2, "rodadas c/ números restantes", "0", T.PURPLE)
-        for i, c in enumerate((self.st_seq, self.st_nums)):
+        self.st_nums = StatCard(cards2, "rodadas c/ números", "0", T.PURPLE)
+        for i, c in enumerate((self.st_taxa, self.st_recusadas, self.st_aprendidas,
+                               self.st_seq, self.st_nums)):
             c.grid(row=0, column=i, sticky="nsew", padx=(0 if i == 0 else 12, 0))
             cards2.columnconfigure(i, weight=1)
 
@@ -1991,20 +2607,77 @@ class AppUI:
 
     # ---------- Estatísticas ----------
     def _refresh_stats(self):
-        total_dict = len(self.bot.dict.palavras)
-        enviadas = len(self.bot.historico)
+        bot = self.bot
+        total_dict = len(bot.dict.palavras)
+        enviadas = len(bot.historico)
+        usadas = bot.selector.letras_usadas
+
         self.st_dict.set(total_dict)
         self.st_enviadas.set(enviadas)
-        self.st_alfabeto.set(self.bot.selector.alfabeto_completado)
-        self.st_erros.set(self.bot.erros_propositais)
-        self.st_seq.set(self.bot.acertos_consecutivos)
-        self.st_nums.set(self.bot.numeros_restantes)
+        self.st_alfabeto.set(bot.selector.alfabeto_completado)
+        self.st_erros.set(bot.erros_propositais)
+        self.st_seq.set(bot.acertos_consecutivos)
+        self.st_nums.set(bot.numeros_restantes)
+        self.st_recusadas.set(bot.recusadas)
+        self.st_aprendidas.set(len(bot.dict.rejeitadas))
+        self.st_taxa.set(f"{bot.taxa_aceitacao:.0f}%" if (bot.aceitas + bot.recusadas) else "—")
+
         self.card_palavras.set(enviadas)
-        self.card_sequencia.set(self.bot.acertos_consecutivos)
+        self.card_sequencia.set(bot.acertos_consecutivos)
         self.card_dict.set(total_dict)
-        self.lbl_status_right.configure(
-            text=f"modo: {self.bot.modo_atual}   ·   dicionário: {total_dict}   ·   enviadas: {enviadas}")
+
+        self.grid_alfabeto.atualizar(usadas)
+        self.lbl_alfabeto.configure(text=f"{len(usadas)} / {len(LETRAS_ALFABETO)}")
+
+        resumo = f"modo: {bot.modo_atual}   ·   dicionário: {total_dict}   ·   enviadas: {enviadas}"
+        if bot.aceitas + bot.recusadas:
+            resumo += f"   ·   aceitação: {bot.taxa_aceitacao:.0f}%"
+        self.lbl_status_right.configure(text=resumo)
         self.root.after(700, self._refresh_stats)
+
+    # ---------- Perfis / partida / diagnóstico ----------
+    def _aplicar_preset(self, nome):
+        p = PRESETS[nome]
+        self.seg_perfil.set(p["perfil"])
+        self.sld_delay_letra.set(p["delay_letra"])
+        self.sld_chance_erro.set(p["chance_erro"])
+        self.sld_var_delay.set(p["var_delay"])
+        self.stp_pausa_cada.set(p["pausa_cada"])
+        self.sld_pausa_min.set(p["pausa_min"])
+        self.sld_pausa_max.set(p["pausa_max"])
+        self.sld_chance_falha.set(p["falha"])
+        self.sld_chance_errEnter.set(p["err_enter"])
+        self.sld_chance_frase.set(p["frase"])
+        self.sld_chance_ensaio.set(p["ensaio"])
+        self.tgl_pensar3.set(p["pensar3"])
+        self.sld_pensar_ms.set(p["pensar_ms"])
+        self.sld_limite.set(p["limite"])
+        self.enqueue_log(f"Perfil '{nome}' aplicado. Clique em Aplicar e salvar para gravar.")
+
+    def _nova_partida(self):
+        self.bot.nova_partida("botão")
+
+    def _rodar_diagnostico(self):
+        diag = Capturador.diagnostico_escala()
+        if not diag:
+            self.lbl_diag.configure(text="Não foi possível ler a resolução da tela.", fg=T.WARN)
+            return
+        if diag["ok"]:
+            txt = (f"Tela: {diag['logica'][0]}x{diag['logica'][1]} lógica = física. "
+                   f"Sem problema de escala.")
+            cor = T.SUCCESS
+        else:
+            txt = (f"Atenção: a tela reporta {diag['logica'][0]}x{diag['logica'][1]} mas a captura "
+                   f"devolve {diag['fisica'][0]}x{diag['fisica'][1]} (fator {diag['fator']:.2f}). "
+                   f"A escala do Windows não é 100%: os cliques e a leitura da tela vão cair no lugar "
+                   f"errado. Use 100% de escala ou ative a ciência de DPI e recalibre TODAS as posições.")
+            cor = T.DANGER
+        if self.pos_mgr.resolucao and tuple(self.pos_mgr.resolucao) != tuple(diag["logica"]):
+            txt += (f"  As posições foram calibradas em "
+                    f"{self.pos_mgr.resolucao[0]}x{self.pos_mgr.resolucao[1]} — recalibre.")
+            cor = T.WARN
+        self.lbl_diag.configure(text=txt, fg=cor)
+        self.enqueue_log(txt)
 
     def _refresh_historico(self):
         self.txt_hist.configure(state=tk.NORMAL)
@@ -2067,15 +2740,28 @@ class AppUI:
         self._parar()
 
     def _monitor_f8(self):
+        """Atalhos globais: F8 para tudo, F7 troca de modo, F6 zera a partida."""
+        acoes = {
+            'f8': self._handle_kill_switch,
+            'f7': self._ciclar_modo,
+            'f6': self._nova_partida,
+        }
         while True:
             try:
-                if keyboard.is_pressed('f8'):
-                    self.root.after(0, self._handle_kill_switch)
-                    while keyboard.is_pressed('f8'):
-                        time.sleep(0.05)
+                for tecla, acao in acoes.items():
+                    if keyboard.is_pressed(tecla):
+                        self.root.after(0, acao)
+                        while keyboard.is_pressed(tecla):
+                            time.sleep(0.05)
             except Exception:
                 time.sleep(0.5)
             time.sleep(0.1)
+
+    def _ciclar_modo(self):
+        modos = [m.value for m in Modo]
+        atual = self.modo_sel.get()
+        proximo = modos[(modos.index(atual) + 1) % len(modos)] if atual in modos else modos[0]
+        self.modo_sel.set(proximo, notify=True)
 
     def _toggle_topmost(self, value):
         self.root.attributes("-topmost", bool(value))
@@ -2113,6 +2799,10 @@ class AppUI:
     def _capturar_turn_bar(self):
         self._start_capture("Clique no canto SUPERIOR ESQUERDO e depois no INFERIOR DIREITO da barra de turno",
                             self._set_turn_bar, pontos=2)
+
+    def _capturar_letras_rect(self):
+        self._start_capture("Região da SÍLABA para OCR: clique no canto superior esquerdo e depois no inferior direito",
+                            self._set_letras_rect, pontos=2)
 
     def _start_capture(self, instrucao, callback, pontos=1):
         self._stop_capture()
@@ -2164,6 +2854,7 @@ class AppUI:
             self._capture_hint = None
 
     def _set_pos(self, which, x, y):
+        self._registrar_resolucao()
         if which == 'letras':
             self.pos_mgr.pos_letras = (x, y)
             self.lbl_pos_letras.configure(text=str(self.pos_mgr.pos_letras))
@@ -2173,15 +2864,36 @@ class AppUI:
             self.lbl_pos_chat.configure(text=str(self.pos_mgr.pos_chatbox))
             self.enqueue_log(f"Posição da chatbox definida: {self.pos_mgr.pos_chatbox}")
 
-    def _set_turn_bar(self, p1, p2):
+    @staticmethod
+    def _para_rect(p1, p2):
         x1, y1 = p1
         x2, y2 = p2
-        rect = (int(min(x1, x2)), int(min(y1, y2)), int(abs(x2 - x1)) or 1, int(abs(y2 - y1)) or 1)
+        return (int(min(x1, x2)), int(min(y1, y2)),
+                int(abs(x2 - x1)) or 1, int(abs(y2 - y1)) or 1)
+
+    def _set_turn_bar(self, p1, p2):
+        rect = self._para_rect(p1, p2)
         self.pos_mgr.turn_bar_rect = rect
+        self._registrar_resolucao()
         self.lbl_turn_rect.configure(text=str(rect))
         self.enqueue_log(f"Barra de turno definida: {rect}")
         self.bot.capt.turn_bar_reference = None
         self.bot.capt._warned_turn_rect = False
+
+    def _set_letras_rect(self, p1, p2):
+        rect = self._para_rect(p1, p2)
+        self.pos_mgr.letras_rect = rect
+        self._registrar_resolucao()
+        self.lbl_letras_rect.configure(text=str(rect))
+        self.enqueue_log(f"Região da sílaba (OCR) definida: {rect}")
+        self.bot.capt._warned_ocr = False
+
+    def _registrar_resolucao(self):
+        """Guarda em que resolução as posições foram calibradas."""
+        try:
+            self.pos_mgr.resolucao = tuple(pyautogui.size())
+        except Exception:
+            pass
 
     # ---------- Config ----------
     def _capturar_config_da_ui(self):
@@ -2202,6 +2914,31 @@ class AppUI:
         cfg.penaliza_repetidas = self.tgl_penaliza.get()
         cfg.cooldown_repeticao = self.stp_cool.get()
         cfg.mostrar_top_n = self.stp_top.get()
+
+        # captura da sílaba
+        cfg.metodo_captura = self.seg_captura.get()
+        cfg.preservar_clipboard = self.tgl_clip.get()
+        cfg.clique_captura = self.seg_clique.get()
+        cfg.tentativas_captura = self.stp_tent_captura.get()
+        cfg.turn_bar_metodo = self.seg_turno.get()
+
+        # verificação / aprendizado
+        cfg.verificar_envio = self.tgl_verificar.get()
+        cfg.delay_verificacao_ms = int(self.sld_verif_ms.get())
+        cfg.max_tentativas_rodada = self.stp_tentativas.get()
+        cfg.aprender_rejeitadas = self.tgl_aprender.get()
+        cfg.auto_nova_partida = self.tgl_auto_partida.get()
+        cfg.inatividade_nova_partida_s = round(self.sld_inatividade.get(), 1)
+
+        # seleção
+        cfg.bloquear_usadas_na_partida = self.tgl_bloquear_usadas.get()
+        cfg.preferir_prefixo = self.tgl_prefixo.get()
+        cfg.peso_prefixo = round(self.sld_peso_prefixo.get(), 2)
+        cfg.alfabeto_hibrido = self.tgl_alf_hibrido.get()
+        cfg.peso_letras_novas = round(self.sld_peso_letras.get(), 2)
+
+        # sistema
+        cfg.dpi_aware = self.tgl_dpi.get()
 
         h = cfg.humanizar
         h.perfil = self.seg_perfil.get()

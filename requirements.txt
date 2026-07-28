@@ -1,0 +1,13 @@
+# Dependências da automação JKLM.fun
+numpy
+opencv-python
+pyautogui
+pynput
+pyperclip
+keyboard
+Pillow
+
+# Opcional: habilita o método de captura por OCR (Setup > Captura da sílaba).
+# Além do pacote, é preciso instalar o Tesseract no sistema:
+# https://github.com/UB-Mannheim/tesseract/wiki
+# pytesseract
