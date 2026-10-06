@@ -70,29 +70,32 @@ public sealed class TypingPlanner(Random random)
         return new RoundScript(RoundStyle.Normal, plans, flags);
     }
 
-    public static RoundScript QuickRound(string text) =>
-        new(RoundStyle.Quick, [Quick(text)], []);
+    public static RoundScript QuickRound(string text, TimingSettings t) =>
+        new(RoundStyle.Quick, [Quick(text, t)], []);
 
     /// <summary>Digita a palavra com o perfil humanizado e envia.</summary>
     public TypingPlan Word(string word, HumanizationSettings h, TimingSettings t, bool think, bool numbers,
         string label = "palavra")
     {
-        var steps = new List<TypingStep> { new TypingStep.Focus(), Wait(t.BeforeTypingMs) };
+        // Começa limpando o campo: sobra de um envio anterior nunca pode virar prefixo da palavra.
+        var steps = new List<TypingStep>();
+        Key(steps, new TypingStep.ClearField(), t);
+        steps.Add(Wait(t.BeforeTypingMs));
         int thinkIndex = Math.Min(2, word.Length - 1);
         for (int i = 0; i < word.Length; i++)
         {
             char ch = word[i];
             if (random.NextDouble() < h.TypoChance && char.IsLetter(ch))
             {
-                steps.Add(new TypingStep.TypeText(RandomLetter().ToString()));
+                Key(steps, new TypingStep.TypeText(RandomLetter().ToString()), t);
                 AddLetterDelay(steps, i, word.Length, h);
-                steps.Add(new TypingStep.Backspace());
+                Key(steps, new TypingStep.Backspace(), t);
             }
 
-            steps.Add(new TypingStep.TypeText(ch.ToString()));
+            Key(steps, new TypingStep.TypeText(ch.ToString()), t);
 
             if (numbers && random.NextDouble() < NumberChancePerChar)
-                steps.Add(new TypingStep.TypeText(random.Next(0, 10).ToString()));
+                Key(steps, new TypingStep.TypeText(random.Next(0, 10).ToString()), t);
 
             if (think && i == thinkIndex)
                 steps.Add(Wait(h.ThinkAfterThreeMs));
@@ -100,40 +103,57 @@ public sealed class TypingPlanner(Random random)
             AddLetterDelay(steps, i, word.Length, h);
         }
         steps.Add(new TypingStep.Wait(Ms.Seconds(random.Uniform(h.EnterHesitationMinSeconds, h.EnterHesitationMaxSeconds))));
-        steps.Add(new TypingStep.Submit());
+        Key(steps, new TypingStep.Submit(), t);
         return new TypingPlan(label, steps);
     }
 
     /// <summary>Digita um texto que não é enviado e depois apaga o campo.</summary>
     public TypingPlan Scratch(string text, HumanizationSettings h, TimingSettings t, string label)
     {
-        var steps = new List<TypingStep> { new TypingStep.Focus(), Wait(t.BeforeTypingMs) };
+        var steps = new List<TypingStep>();
+        Key(steps, new TypingStep.Focus(), t);
+        steps.Add(Wait(t.BeforeTypingMs));
         for (int i = 0; i < text.Length; i++)
         {
             if (random.NextDouble() < h.TypoChance && char.IsLetter(text[i]))
             {
-                steps.Add(new TypingStep.TypeText(RandomLetter().ToString()));
+                Key(steps, new TypingStep.TypeText(RandomLetter().ToString()), t);
                 AddLetterDelay(steps, i, text.Length, h);
-                steps.Add(new TypingStep.Backspace());
+                Key(steps, new TypingStep.Backspace(), t);
             }
-            steps.Add(new TypingStep.TypeText(text[i].ToString()));
+            Key(steps, new TypingStep.TypeText(text[i].ToString()), t);
             AddLetterDelay(steps, i, text.Length, h);
         }
-        steps.Add(new TypingStep.ClearField());
+        Key(steps, new TypingStep.ClearField(), t);
         return new TypingPlan(label, steps);
     }
 
     /// <summary>Envio direto, sem encenação: usado quando o tempo aperta.</summary>
-    public static TypingPlan Quick(string text)
+    public static TypingPlan Quick(string text, TimingSettings t)
     {
-        var steps = new List<TypingStep> { new TypingStep.Focus(), Wait(50) };
+        var steps = new List<TypingStep>();
+        Key(steps, new TypingStep.ClearField(), t);
+        steps.Add(Wait(50));
         foreach (char ch in text)
         {
-            steps.Add(new TypingStep.TypeText(ch.ToString()));
+            Key(steps, new TypingStep.TypeText(ch.ToString()), t);
             steps.Add(Wait(1));
         }
-        steps.Add(new TypingStep.Submit());
+        Key(steps, new TypingStep.Submit(), t);
         return new TypingPlan("envio rápido", steps);
+    }
+
+    /// <summary>
+    /// Toda ação de teclado/mouse é seguida do intervalo mínimo configurado. O navegador e o jogo
+    /// processam as teclas de forma assíncrona; sem esse respiro o ENTER chega antes das letras e a
+    /// palavra seguinte começa antes de o campo ser limpo. (A versão em Python tinha esse intervalo
+    /// sem perceber: o pyautogui espera 100 ms depois de cada chamada por padrão.)
+    /// </summary>
+    private static void Key(List<TypingStep> steps, TypingStep step, TimingSettings t)
+    {
+        steps.Add(step);
+        if (t.KeyIntervalMs > 0)
+            steps.Add(Wait(t.KeyIntervalMs));
     }
 
     /// <summary>Troca uma letra (palavras com mais de N letras) ou acrescenta uma letra no fim.</summary>

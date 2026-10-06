@@ -94,6 +94,10 @@ arquivos próprios. Os botões *Abrir pasta de dados* e *Abrir pasta de logs* le
 - **Envia em turnos alheios**: aumente o limite do template/da barra de turno.
 - **"Digitação bloqueada por segurança"**: alguma janela (inclusive o Bombinha "sempre no topo") está por cima
   do campo de digitação, ou o foco foi para outro programa.
+- **ENTER antes da palavra terminar / palavra digitada em cima de outra**: aumente *Setup › Ritmo e limites ›
+  Intervalo mínimo entre teclas* (padrão 100 ms, o mesmo ritmo da versão antiga). Valores baixos são mais rápidos,
+  mas o navegador pode não registrar as teclas a tempo. Com intervalos maiores, aumente também o *Orçamento por
+  turno*, senão a encenação é cortada com frequência.
 - **Captura falhando seguidamente**: confira a posição da área das letras e o zoom do navegador; experimente o
   clique triplo ou o OCR.
 - Achou que o bot aprendeu errado? Edite ou apague `rejeitadas.txt`.

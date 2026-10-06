@@ -309,7 +309,7 @@ public sealed class BotEngine : IDisposable
         }
         _log.Warning("Nenhuma palavra encontrada – enviando a frase de desistência.");
         SetStatus(EngineStatus.Playing);
-        if (CreateExecutor(s).Execute(TypingPlanner.Quick(phrase), s.Calibration.ChatPoint, s.General.TestMode, ct) != PlanOutcome.Completed)
+        if (CreateExecutor(s).Execute(TypingPlanner.Quick(phrase, s.Timing), s.Calibration.ChatPoint, s.General.TestMode, ct) != PlanOutcome.Completed)
             _log.Info("Envio da frase de desistência cancelado.");
     }
 
@@ -343,7 +343,7 @@ public sealed class BotEngine : IDisposable
         }
         if (hurried || script.EstimatedDuration > budget)
         {
-            script = TypingPlanner.QuickRound(choice);
+            script = TypingPlanner.QuickRound(choice, s.Timing);
             useNumbers = false;
         }
 

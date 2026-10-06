@@ -180,8 +180,8 @@ public class TypingPlannerTests
     public void Palavra_sem_humanizacao_digita_exatamente_a_palavra()
     {
         var plan = new TypingPlanner(new Random(1)).Word("bracelete", Calm(), Timing, think: false, numbers: false);
-        Assert.IsType<TypingStep.Focus>(plan.Steps[0]);
-        Assert.IsType<TypingStep.Submit>(plan.Steps[^1]);
+        Assert.IsType<TypingStep.ClearField>(plan.Steps[0]); // limpa sobras antes de digitar
+        Assert.IsType<TypingStep.Submit>(plan.Steps.Last(s => s is not TypingStep.Wait));
         Assert.Equal("bracelete", plan.SubmittedText);
     }
 
@@ -212,7 +212,9 @@ public class TypingPlannerTests
         h.ThinkAfterThreeMs = 700;
         var steps = new TypingPlanner(new Random(1)).Word("brasa", h, Timing, think: true, numbers: false).Steps;
         int third = steps.Select((s, i) => (s, i)).Where(x => x.s is TypingStep.TypeText).ElementAt(2).i;
-        Assert.Equal(new TypingStep.Wait(TimeSpan.FromMilliseconds(700)), steps[third + 1]);
+        // depois da 3ª letra: intervalo entre teclas e, em seguida, a pausa de "pensar"
+        Assert.Equal(new TypingStep.Wait(TimeSpan.FromMilliseconds(Timing.KeyIntervalMs)), steps[third + 1]);
+        Assert.Equal(new TypingStep.Wait(TimeSpan.FromMilliseconds(700)), steps[third + 2]);
     }
 
     [Fact]
@@ -273,7 +275,7 @@ public class TypingPlannerTests
         var script = planner.BuildRound("bracelete", new RoundTriggers(true, true, false, false), false, false, Calm(), Timing);
         Assert.Equal(3, script.Plans.Count);
         Assert.False(script.Plans[0].Submits);
-        Assert.IsType<TypingStep.ClearField>(script.Plans[0].Steps[^1]);
+        Assert.IsType<TypingStep.ClearField>(script.Plans[0].Steps.Last(s => s is not TypingStep.Wait));
         Assert.False(script.Plans[1].Submits);
         Assert.Equal("bracelete", script.Plans[2].SubmittedText);
         Assert.Equal(["frase", "ensaio"], script.Flags);
@@ -282,10 +284,35 @@ public class TypingPlannerTests
     [Fact]
     public void Duracao_estimada_soma_esperas_e_custos()
     {
-        var plan = TypingPlanner.Quick("abc");
-        var expected = TypingPlan.FocusCost + TimeSpan.FromMilliseconds(50)
+        var t = new TimingSettings { KeyIntervalMs = 0 };
+        var plan = TypingPlanner.Quick("abc", t);
+        var expected = TypingPlan.ClearFieldCost + TimeSpan.FromMilliseconds(50)
                        + (3 * (TypingPlan.KeyCost + TimeSpan.FromMilliseconds(1))) + TypingPlan.SubmitCost;
         Assert.Equal(expected, plan.EstimatedDuration);
+    }
+
+    [Fact]
+    public void Cada_tecla_e_seguida_do_intervalo_minimo()
+    {
+        var t = new TimingSettings { KeyIntervalMs = 100 };
+        var steps = TypingPlanner.Quick("abc", t).Steps;
+        var interval = new TypingStep.Wait(TimeSpan.FromMilliseconds(100));
+        for (int i = 0; i < steps.Count; i++)
+        {
+            if (steps[i] is TypingStep.TypeText or TypingStep.Submit or TypingStep.ClearField)
+                Assert.Equal(interval, steps[i + 1]);
+        }
+        Assert.Equal(interval, steps[^1]); // inclusive depois do ENTER
+        Assert.True(TypingPlanner.Quick("abc", t).EstimatedDuration >= TimeSpan.FromMilliseconds(500));
+    }
+
+    [Fact]
+    public void Texto_visivel_ignora_a_limpeza_inicial()
+    {
+        var plan = TypingPlanner.Quick("casa", new TimingSettings());
+        Assert.Equal("casa", plan.SubmittedText);
+        var scratch = new TypingPlanner(new Random(1)).Scratch("oi", Calm(), Timing, "frase");
+        Assert.Equal("oi", scratch.VisibleText());
     }
 
     [Fact]
@@ -322,7 +349,7 @@ public class TypingExecutorTests
     [Fact]
     public void Executa_o_roteiro_e_envia()
     {
-        var outcome = Executor().Execute(TypingPlanner.Quick("casa"), new(10, 20), testMode: false, CancellationToken.None);
+        var outcome = Executor().Execute(TypingPlanner.Quick("casa", new TimingSettings()), new(10, 20), testMode: false, CancellationToken.None);
         Assert.Equal(PlanOutcome.Completed, outcome);
         Assert.Equal(["casa"], _input.Submitted);
         Assert.Equal("move(10, 20)", _input.Events[0]);
@@ -331,7 +358,7 @@ public class TypingExecutorTests
     [Fact]
     public void Turno_perdido_nao_aperta_enter()
     {
-        var outcome = Executor(turnOk: false).Execute(TypingPlanner.Quick("casa"), new(1, 1), false, CancellationToken.None);
+        var outcome = Executor(turnOk: false).Execute(TypingPlanner.Quick("casa", new TimingSettings()), new(1, 1), false, CancellationToken.None);
         Assert.Equal(PlanOutcome.TurnLost, outcome);
         Assert.DoesNotContain("key:Enter", _input.Events);
     }
@@ -340,7 +367,7 @@ public class TypingExecutorTests
     public void Alvo_inseguro_nao_digita_nada()
     {
         var outcome = Executor(target: TargetCheck.Unsafe("Bombinha está por cima do jogo"))
-            .Execute(TypingPlanner.Quick("casa"), new(1, 1), false, CancellationToken.None);
+            .Execute(TypingPlanner.Quick("casa", new TimingSettings()), new(1, 1), false, CancellationToken.None);
         Assert.Equal(PlanOutcome.UnsafeTarget, outcome);
         Assert.DoesNotContain(_input.Events, e => e.StartsWith("type:", StringComparison.Ordinal));
     }
@@ -348,7 +375,7 @@ public class TypingExecutorTests
     [Fact]
     public void Modo_teste_so_registra()
     {
-        var outcome = Executor().Execute(TypingPlanner.Quick("casa"), new(1, 1), testMode: true, CancellationToken.None);
+        var outcome = Executor().Execute(TypingPlanner.Quick("casa", new TimingSettings()), new(1, 1), testMode: true, CancellationToken.None);
         Assert.Equal(PlanOutcome.Completed, outcome);
         Assert.Empty(_input.Events);
         Assert.Contains(_log.Entries, e => e.Message.Contains("[TESTE]", StringComparison.Ordinal) && e.Message.Contains("casa", StringComparison.Ordinal));
@@ -364,7 +391,7 @@ public class TypingExecutorTests
                 cts.Cancel(); // F8 apertado depois de 2 letras
         };
         Assert.Throws<OperationCanceledException>(() =>
-            Executor().Execute(TypingPlanner.Quick("bracelete"), new(1, 1), false, cts.Token));
+            Executor().Execute(TypingPlanner.Quick("bracelete", new TimingSettings()), new(1, 1), false, cts.Token));
         Assert.Equal(2, _input.Events.Count(e => e.StartsWith("type:", StringComparison.Ordinal)));
         Assert.DoesNotContain("key:Enter", _input.Events);
     }

@@ -152,6 +152,9 @@
                     <c:SettingRow Label="Após selecionar as letras" Hint="Também é o prazo máximo para o Ctrl+C chegar">
                         <c:SettingSlider Minimum="80" Maximum="800" Suffix="ms" Value="{Binding Editing.Timing.SettleAfterSelectMs}" />
                     </c:SettingRow>
+                    <c:SettingRow Label="Intervalo mínimo entre teclas" Hint="Espera após cada letra, clique e ENTER para o jogo registrar. 100 ms = ritmo da versão antiga; baixo demais faz o jogo perder letras">
+                        <c:SettingSlider Minimum="0" Maximum="300" Suffix="ms" Value="{Binding Editing.Timing.KeyIntervalMs}" />
+                    </c:SettingRow>
                     <c:SettingRow Label="Antes de digitar a palavra">
                         <c:SettingSlider Minimum="0" Maximum="1000" Suffix="ms" Value="{Binding Editing.Timing.BeforeTypingMs}" />
                     </c:SettingRow>

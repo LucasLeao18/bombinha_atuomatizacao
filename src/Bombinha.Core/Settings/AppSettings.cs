@@ -246,12 +246,19 @@ public sealed class TimingSettings
     /// <summary>Orçamento de tempo por turno; acima dele a encenação é cortada.</summary>
     public double RoundTimeLimitSeconds { get; set; } = 4.5;
 
+    /// <summary>
+    /// Espera mínima depois de cada tecla, clique ou ENTER, para o navegador/jogo processar a entrada.
+    /// 100 ms reproduz o ritmo real da versão em Python (pausa padrão do pyautogui).
+    /// </summary>
+    public int KeyIntervalMs { get; set; } = 100;
+
     internal void Normalize()
     {
         CycleDelayMs = Math.Clamp(CycleDelayMs, 50, 2000);
         SettleAfterSelectMs = Math.Clamp(SettleAfterSelectMs, 30, 1500);
         BeforeTypingMs = Math.Clamp(BeforeTypingMs, 0, 2000);
         RoundTimeLimitSeconds = Math.Clamp(RoundTimeLimitSeconds, 0.5, 15.0);
+        KeyIntervalMs = Math.Clamp(KeyIntervalMs, 0, 300);
     }
 }
 

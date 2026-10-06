@@ -278,7 +278,8 @@ public class EngineFeedbackTests
         });
         t.Play("bra");
         Assert.Equal(["bracelete"], t.Input.Submitted);
-        Assert.DoesNotContain("chord:Control+A", t.Input.Events); // frase engraçada não foi digitada/apagada
+        // frase engraçada não foi digitada: só as 9 letras da palavra
+        Assert.Equal(9, t.Input.Events.Count(e => e.StartsWith("type:", StringComparison.Ordinal)));
         Assert.True(t.Logged("Tempo curto"));
     }
 }

@@ -62,6 +62,13 @@ entradas duplicadas.
 
 ### Comportamentos preservados
 
+**Ritmo implícito do pyautogui.** O código antigo nunca altera `pyautogui.PAUSE`, que vale 0,1 s: depois de
+*cada* letra, tecla, clique e ENTER havia 100 ms de espera, mesmo com "atraso entre letras" de 5 ms. A primeira
+versão da reescrita não reproduzia isso e digitava rápido demais para o jogo (ENTER antes das letras serem
+registradas, palavra nova começando antes de o campo ser limpo). Agora o intervalo é uma configuração explícita
+(`timing.keyIntervalMs`, padrão 100 ms, ajustável em Setup) aplicada depois de toda ação de entrada, e cada
+palavra começa limpando o campo.
+
 Todos os recursos visíveis foram mantidos: modos e pontuação (mesmas fórmulas, testadas), verificação de envio
 e aprendizado, orçamento por turno, nova partida automática, captura por clique (duplo/triplo/auto, tentativas)
 e por OCR, comparação da barra de turno (pixel/cor/híbrido), toda a humanização e os três perfis, frase de

@@ -59,10 +59,13 @@ public sealed record TypingPlan(string Label, IReadOnlyList<TypingStep> Steps)
         }
     }
 
-    /// <summary>Simula o campo de texto até o ENTER ou até ele ser apagado.</summary>
+    /// <summary>
+    /// Simula o campo de texto: o que havia no ENTER; num roteiro sem ENTER, o que foi digitado antes de apagar.
+    /// </summary>
     public string VisibleText()
     {
         var sb = new StringBuilder();
+        string lastErased = "";
         foreach (var step in Steps)
         {
             switch (step)
@@ -74,11 +77,15 @@ public sealed record TypingPlan(string Label, IReadOnlyList<TypingStep> Steps)
                     sb.Length--;
                     break;
                 case TypingStep.ClearField:
+                    if (sb.Length > 0)
+                        lastErased = sb.ToString();
+                    sb.Clear();
+                    break;
                 case TypingStep.Submit:
                     return sb.ToString();
             }
         }
-        return sb.ToString();
+        return sb.Length > 0 ? sb.ToString() : lastErased;
     }
 }
 
