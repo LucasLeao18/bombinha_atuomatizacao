@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Bombinha.App/Bombinha.App.csproj" />
+    <Project Path="src/Bombinha.Core/Bombinha.Core.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Bombinha.App.IntegrationTests/Bombinha.App.IntegrationTests.csproj" />
+    <Project Path="tests/Bombinha.Core.Tests/Bombinha.Core.Tests.csproj" />
+  </Folder>
+</Solution>

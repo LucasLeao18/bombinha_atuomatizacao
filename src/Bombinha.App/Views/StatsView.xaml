@@ -1,0 +1,65 @@
+<UserControl x:Class="Bombinha.App.Views.StatsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="clr-namespace:Bombinha.App.ViewModels"
+             xmlns:c="clr-namespace:Bombinha.App.Ui.Controls"
+             mc:Ignorable="d"
+             d:DataContext="{d:DesignInstance Type=vm:MainViewModel}">
+    <DockPanel>
+        <UniformGrid DockPanel.Dock="Top" Rows="1">
+            <c:StatTile Caption="PALAVRAS NO DICIONÁRIO" Value="{Binding DictionaryCountText}" Accent="{StaticResource Purple}" Margin="0,0,12,0" />
+            <c:StatTile Caption="PALAVRAS ACEITAS" Value="{Binding SentCount}" Accent="{StaticResource Accent}" Margin="0,0,12,0" />
+            <c:StatTile Caption="ALFABETOS COMPLETOS" Value="{Binding AlphabetsCompleted}" Accent="{StaticResource Success}" Margin="0,0,12,0" />
+            <c:StatTile Caption="ERROS PROPOSITAIS" Value="{Binding DeliberateFailures}" Accent="{StaticResource Warn}" />
+        </UniformGrid>
+        <UniformGrid DockPanel.Dock="Top" Rows="1" Margin="0,14,0,0">
+            <c:StatTile Caption="TAXA DE ACEITAÇÃO" Value="{Binding AcceptanceText}" Accent="{StaticResource Accent}" Margin="0,0,12,0" />
+            <c:StatTile Caption="RECUSADAS PELO JOGO" Value="{Binding RejectedCount}" Accent="{StaticResource Danger}" Margin="0,0,12,0" />
+            <c:StatTile Caption="APRENDIDAS (FORA DO JOGO)" Value="{Binding LearnedCount}" Accent="{StaticResource Warn}" Margin="0,0,12,0" />
+            <c:StatTile Caption="ACERTOS CONSECUTIVOS" Value="{Binding Streak}" Accent="{StaticResource Success}" Margin="0,0,12,0" />
+            <c:StatTile Caption="RODADAS C/ NÚMEROS" Value="{Binding NumbersRemaining}" Accent="{StaticResource Purple}" />
+        </UniformGrid>
+
+        <c:Card Header="Histórico da sessão" Subtitle="Palavras aceitas (mais recentes primeiro) e quantas vezes cada uma foi usada" Margin="0,18,0,0">
+            <DockPanel>
+                <Button DockPanel.Dock="Top" HorizontalAlignment="Left" Style="{StaticResource BtnSmall}" Content="⇩  Exportar .txt"
+                        Command="{Binding ExportHistoryCommand}" Margin="0,0,0,10" />
+                <Border Background="{StaticResource Surface2}" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="8" Padding="4">
+                    <Grid>
+                        <TextBlock Text="Nenhuma palavra aceita nesta sessão ainda." Margin="10,8">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock" BasedOn="{StaticResource Muted}">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding History.Count}" Value="0">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                        <ListBox ItemsSource="{Binding History}" Background="Transparent" BorderThickness="0"
+                                 VirtualizingPanel.IsVirtualizing="True" FontFamily="{StaticResource Mono}" Foreground="{StaticResource TextDim}">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate DataType="vm:HistoryRow">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="50" />
+                                            <ColumnDefinition Width="260" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="{Binding Index, StringFormat={}{0}.}" TextAlignment="Right" Margin="0,0,12,0" Foreground="{StaticResource TextMute}" />
+                                        <TextBlock Grid.Column="1" Text="{Binding Word}" Foreground="{StaticResource Text}" />
+                                        <TextBlock Grid.Column="2" Text="{Binding Uses, StringFormat=usada {0}x}" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                    </Grid>
+                </Border>
+            </DockPanel>
+        </c:Card>
+    </DockPanel>
+</UserControl>

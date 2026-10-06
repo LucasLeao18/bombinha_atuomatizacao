@@ -1,0 +1,119 @@
+<UserControl x:Class="Bombinha.App.Views.HumanizationView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="clr-namespace:Bombinha.App.ViewModels"
+             xmlns:c="clr-namespace:Bombinha.App.Ui.Controls"
+             xmlns:core="clr-namespace:Bombinha.Core.Settings;assembly=Bombinha.Core"
+             mc:Ignorable="d"
+             d:DataContext="{d:DesignInstance Type=vm:MainViewModel}">
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel DataContext="{Binding Setup}" Margin="0,0,8,0">
+
+            <c:Card Header="Perfis prontos" Subtitle="Ajustam todos os controles abaixo de uma vez (grave com Aplicar e salvar)">
+                <ItemsControl ItemsSource="{x:Static core:HumanizationPreset.All}">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <UniformGrid Rows="1" />
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate DataType="core:HumanizationPreset">
+                            <StackPanel Margin="0,0,10,0">
+                                <Button Content="{Binding Name}" HorizontalAlignment="Stretch"
+                                        Command="{Binding DataContext.ApplyPresetCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                        CommandParameter="{Binding}" />
+                                <TextBlock Text="{Binding Description}" Style="{StaticResource Muted}" Margin="0,6,0,0" />
+                            </StackPanel>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </c:Card>
+
+            <c:Card Header="Perfil de digitação" Subtitle="Como o bot distribui o tempo entre as teclas">
+                <StackPanel>
+                    <c:SettingRow Label="Perfil de velocidade">
+                        <Border Style="{StaticResource SegmentHost}">
+                            <StackPanel Orientation="Horizontal">
+                                <RadioButton Style="{StaticResource Segment}" Content="Rápida" IsChecked="{Binding Editing.Humanization.Profile, Converter={StaticResource EnumEq}, ConverterParameter={x:Static core:TypingSpeedProfile.Fast}}" />
+                                <RadioButton Style="{StaticResource Segment}" Content="Aleatória" IsChecked="{Binding Editing.Humanization.Profile, Converter={StaticResource EnumEq}, ConverterParameter={x:Static core:TypingSpeedProfile.Random}}" />
+                                <RadioButton Style="{StaticResource Segment}" Content="Gradual" IsChecked="{Binding Editing.Humanization.Profile, Converter={StaticResource EnumEq}, ConverterParameter={x:Static core:TypingSpeedProfile.Gradual}}" />
+                                <RadioButton Style="{StaticResource Segment}" Content="Constante" IsChecked="{Binding Editing.Humanization.Profile, Converter={StaticResource EnumEq}, ConverterParameter={x:Static core:TypingSpeedProfile.None}}" />
+                            </StackPanel>
+                        </Border>
+                    </c:SettingRow>
+                    <c:SettingRow Label="Atraso entre letras">
+                        <c:SettingSlider Minimum="1" Maximum="120" Suffix="ms" Value="{Binding Editing.Humanization.LetterDelayMs}" />
+                    </c:SettingRow>
+                    <c:SettingRow Label="Variação máxima do atraso">
+                        <c:SettingSlider Minimum="0" Maximum="50" Suffix="ms" Value="{Binding Editing.Humanization.DelayJitterSeconds, Converter={StaticResource SecToMs}}" />
+                    </c:SettingRow>
+                    <c:SettingRow Label="Erro de digitação por letra" Hint="Erra e corrige com backspace">
+                        <c:SettingSlider Minimum="0" Maximum="25" Suffix="%" Value="{Binding Editing.Humanization.TypoChance, Converter={StaticResource Percent}}" />
+                    </c:SettingRow>
+                    <c:SettingRow Label="Respirar a cada N letras">
+                        <c:NumericStepper Minimum="2" Maximum="8" Value="{Binding Editing.Humanization.PauseEvery}" />
+                    </c:SettingRow>
+                    <c:SettingRow Label="Pausa mínima">
+                        <c:SettingSlider Minimum="0" Maximum="300" Suffix="ms" Value="{Binding Editing.Humanization.PauseMinSeconds, Converter={StaticResource SecToMs}}" />
+                    </c:SettingRow>
+                    <c:SettingRow Label="Pausa máxima">
+                        <c:SettingSlider Minimum="0" Maximum="600" Suffix="ms" Value="{Binding Editing.Humanization.PauseMaxSeconds, Converter={StaticResource SecToMs}}" />
+                    </c:SettingRow>
+                    <c:SettingRow Label="Hesitação antes do ENTER (mín.)">
+                        <c:SettingSlider Minimum="0" Maximum="1000" Suffix="ms" Value="{Binding Editing.Humanization.EnterHesitationMinSeconds, Converter={StaticResource SecToMs}}" />
+                    </c:SettingRow>
+                    <c:SettingRow Label="Hesitação antes do ENTER (máx.)">
+                        <c:SettingSlider Minimum="0" Maximum="1000" Suffix="ms" Value="{Binding Editing.Humanization.EnterHesitationMaxSeconds, Converter={StaticResource SecToMs}}" />
+                    </c:SettingRow>
+                </StackPanel>
+            </c:Card>
+
+            <c:Card Header="Comportamentos humanizados" Subtitle="Cada rodada sorteia estes gatilhos; com pouco tempo eles são cortados">
+                <StackPanel>
+                    <c:SettingRow Label="Falha proposital" Hint="Envia uma palavra errada de vez em quando">
+                        <c:SettingSlider Minimum="0" Maximum="50" Suffix="%" Value="{Binding Editing.Humanization.DeliberateFailChance, Converter={StaticResource Percent}}" />
+                    </c:SettingRow>
+                    <c:SettingRow Label="Errar, dar ENTER e corrigir">
+                        <c:SettingSlider Minimum="0" Maximum="60" Suffix="%" Value="{Binding Editing.Humanization.WrongEnterChance, Converter={StaticResource Percent}}" />
+                    </c:SettingRow>
+                    <c:SettingRow Label="Frase engraçada antes" Hint="Digita e apaga uma frase da lista abaixo">
+                        <c:SettingSlider Minimum="0" Maximum="100" Suffix="%" Value="{Binding Editing.Humanization.JokePhraseChance, Converter={StaticResource Percent}}" />
+                    </c:SettingRow>
+                    <c:SettingRow Label="Ensaio da palavra" Hint="Digita um rascunho e apaga antes da resposta">
+                        <c:SettingSlider Minimum="0" Maximum="100" Suffix="%" Value="{Binding Editing.Humanization.RehearsalChance, Converter={StaticResource Percent}}" />
+                    </c:SettingRow>
+                </StackPanel>
+            </c:Card>
+
+            <c:Card Header="Extras">
+                <StackPanel>
+                    <c:SettingRow Label="Pensar após 3 letras" Hint="Quando a palavra começa com as letras do desafio">
+                        <CheckBox Style="{StaticResource Switch}" Content="Ativar" IsChecked="{Binding Editing.Humanization.ThinkAfterThree}" />
+                    </c:SettingRow>
+                    <c:SettingRow Label="Duração da pausa de «pensar»">
+                        <c:SettingSlider Minimum="100" Maximum="2000" Suffix="ms" Value="{Binding Editing.Humanization.ThinkAfterThreeMs}" />
+                    </c:SettingRow>
+                    <c:SettingRow Label="Inserir números aleatórios" Hint="A palavra fica inválida nessas rodadas; isso não conta como recusa dela">
+                        <CheckBox Style="{StaticResource Switch}" Content="Ativar" IsChecked="{Binding Editing.Humanization.InsertNumbers}" />
+                    </c:SettingRow>
+                    <c:SettingRow Label="Rodadas com números">
+                        <c:NumericStepper Minimum="0" Maximum="50" Value="{Binding Editing.Humanization.NumberRounds}" />
+                    </c:SettingRow>
+                </StackPanel>
+            </c:Card>
+
+            <c:Card Header="Frases engraçadas" Subtitle="Uma por linha. São somadas às frases padrão do app">
+                <TextBox Text="{Binding Editing.Humanization.CustomPhrases, Converter={StaticResource Lines}, UpdateSourceTrigger=PropertyChanged}"
+                         AcceptsReturn="True" TextWrapping="Wrap" MinHeight="140" VerticalContentAlignment="Top"
+                         FontFamily="{StaticResource Mono}" VerticalScrollBarVisibility="Auto" />
+            </c:Card>
+
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,18">
+                <Button Style="{StaticResource BtnPrimary}" Content="✔  Aplicar e salvar" Padding="22,10" Command="{Binding ApplyAndSaveCommand}" />
+                <Button Content="Descartar alterações" Padding="18,10" Margin="10,0,0,0" Command="{Binding RevertCommand}" />
+            </StackPanel>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

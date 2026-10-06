@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <!-- 19041 habilita as APIs WinRT (OCR nativo); roda em Windows 10 1809+ e Windows 11. -->
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <SupportedOSPlatformVersion>10.0.17763.0</SupportedOSPlatformVersion>
+    <UseWPF>true</UseWPF>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <AssemblyName>Bombinha</AssemblyName>
+    <RootNamespace>Bombinha.App</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\bombinha.ico</ApplicationIcon>
+    <Title>Bombinha – JKLM.fun PT-BR</Title>
+    <Description>Automação do Bomb Party (JKLM.fun) em português.</Description>
+    <PlatformTarget>x64</PlatformTarget>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Dados padrão embutidos: o executável funciona sozinho, de qualquer pasta. -->
+    <EmbeddedResource Include="..\..\assets\acento.txt" LogicalName="Bombinha.Assets.acento.txt" />
+    <EmbeddedResource Include="..\..\assets\chatbox.png" LogicalName="Bombinha.Assets.chatbox.png" />
+    <Resource Include="Assets\bombinha.ico" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Bombinha.App.IntegrationTests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Bombinha.Core\Bombinha.Core.csproj" />
+  </ItemGroup>
+
+</Project>

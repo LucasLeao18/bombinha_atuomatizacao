@@ -1,0 +1,31 @@
+root = true
+
+[*]
+charset = utf-8
+indent_style = space
+indent_size = 4
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.{csproj,props,targets,xaml,xml,json,config,manifest,slnx}]
+indent_size = 2
+
+[*.cs]
+csharp_style_namespace_declarations = file_scoped:warning
+csharp_style_var_for_built_in_types = true:silent
+dotnet_sort_system_directives_first = true
+
+# Textos de interface/log são em PT-BR e não passam por recursos localizáveis.
+dotnet_diagnostic.CA1303.severity = none
+# Mensagens/identificadores com acentos são intencionais.
+dotnet_diagnostic.CA1707.severity = none
+# Não há ConfigureAwait em app desktop/worker dedicado.
+dotnet_diagnostic.CA2007.severity = none
+# Comparações de string ordinais já são explícitas onde importam.
+dotnet_diagnostic.CA1309.severity = none
+# Random não é usado para fins criptográficos (humanização de digitação).
+dotnet_diagnostic.CA5394.severity = none
+# Formatação com cultura invariável não é relevante para mensagens de log/UI.
+dotnet_diagnostic.CA1305.severity = none
+dotnet_diagnostic.CA1304.severity = none
+dotnet_diagnostic.CA1311.severity = none

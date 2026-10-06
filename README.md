@@ -1,105 +1,122 @@
-# JKLM.fun Automacao PT-BR
+# Bombinha — automação do Bomb Party (JKLM.fun) em PT-BR
 
-Aplicacao desktop em Python para automatizar partidas no jogo JKLM.fun (modo Bomb Party), com interface Tkinter e comportamentos humanizados.
+Aplicativo para Windows 10/11 que joga o modo **Bomb Party** do [JKLM.fun](https://jklm.fun): percebe quando é a
+sua vez, lê a sílaba, escolhe uma palavra do dicionário e digita com comportamento humanizado — conferindo se o
+jogo aceitou e aprendendo as palavras que ele recusa.
+
+> Versão 2 (C#/.NET 10, WPF). A versão original em Python continua em [`legacy/python/`](legacy/python/) como
+> referência. Os motivos da reescrita e a análise completa estão em [`docs/ARQUITETURA.md`](docs/ARQUITETURA.md).
+
+## Instalação
+
+Baixe/gere `Bombinha-<versão>-win-x64.zip`, extraia e rode **`Bombinha.exe`**. É um executável único: não precisa
+instalar Python, .NET, Tesseract nem nenhuma outra dependência, e funciona de qualquer pasta.
+
+- Windows 10 (1809+) ou Windows 11, x64.
+- Não pede administrador. Se o navegador do jogo estiver rodando como administrador, o app avisa (o Windows
+  bloqueia teclas simuladas vindas de um programa comum).
+- O primeiro arranque leva ~2 s (o executável extrai suas bibliotecas nativas uma vez); os seguintes, menos de 1 s.
+
+## Primeiros passos
+
+1. Abra o jogo no navegador e deixe-o visível, sem janelas por cima do campo de digitação.
+2. **Setup › Posições na tela**: clique em *Capturar* e depois no ponto dentro do jogo:
+   - **Área das letras** — sobre a sílaba da bomba;
+   - **Campo de digitação** — dentro do campo onde você digita;
+   - **Barra de turno** — dois cliques (cantos do retângulo).
+   Durante a captura o app se esconde e uma camada transparente recebe o clique (ele não chega ao jogo).
+   As posições são gravadas na hora.
+3. Na sua vez, clique em **Testar detecção**: o app mostra se enxerga o campo de digitação e com que similaridade.
+   Se não reconhecer, use *Imagem do campo de digitação › Capturar da tela* e selecione a borda esquerda do campo.
+4. Em **Principal**, escolha o modo e clique **Iniciar**. **F8** para tudo na hora — inclusive no meio de uma
+   palavra.
+
+Veio da versão em Python? **Setup › Sistema › Importar da versão antiga…** e selecione a pasta que tem o
+`config.json`/`posicoes.json` antigos (neste repositório, `legacy/python`). Configurações, posições,
+`rejeitadas.txt` e `blacklist.txt` são trazidos. Se a escala do Windows não era 100%, recalibre as posições.
+
+## Atalhos
+
+| Tecla | Ação |
+| --- | --- |
+| **F8** | Para a automação imediatamente (global) |
+| **F7** | Troca o modo de jogo (global) |
+| **F6** | Nova partida: zera palavras usadas e alfabeto (global) |
+| **Ctrl+S** | Aplica e salva as configurações |
+
+Os atalhos globais são registrados no Windows (`RegisterHotKey`); se outro programa já usar uma dessas teclas,
+o console avisa.
 
 ## Recursos
-- Interface grafica moderna (tema escuro) com menu lateral, cartoes, sliders e switches.
-- Painel "Rodada atual" mostrando letras detectadas, palavra escolhida e evento em tempo real.
-- Console colorido por nivel (sucesso, aviso, erro) com rolagem automatica e copiar/limpar.
-- Estatisticas em cartoes e historico da sessao exportavel para .txt.
-- Captura automatica das letras do turno e selecao inteligente de palavras usando dicionario.
 
-### Jogo
-- **Verificacao de envio**: apos o ENTER, se ainda for a sua vez a palavra foi recusada — o bot
-  percebe e tenta outra na mesma rodada.
-- **Aprendizado**: palavra recusada 2x vai para `rejeitadas.txt` e nunca mais e usada. Com o tempo
-  o dicionario converge para o que o JKLM realmente aceita.
-- **Nunca repete** palavra na mesma partida (o JKLM sempre recusa repeticao).
-- **Orcamento de tempo por turno**: o bot cronometra desde que a vez virou sua e corta a
-  encenacao conforme o tempo aperta, em vez de usar um limite fixo.
-- **Caca a vida extra**: nos modos normais ele prefere palavras com letras novas quando sobra
-  tempo; o grid de 23 letras na tela mostra o progresso.
-- **Perfis prontos** (Seguro / Equilibrado / Agressivo) ajustam a humanizacao de uma vez.
-- Modo alfabeto com rastreio de letras usadas, cooldown de repeticao e blacklist personalizada.
-- Perfil de digitacao humanizado: erros simulados, pausas, ensaio, frases aleatorias e insercao de numeros.
-- Verificacao visual da vez (barra de turno) antes do envio da palavra.
-- Logs em arquivo opcionais e historico das palavras enviadas.
+**Jogo**
+- Modos: palavras longas, curtas, qualquer palavra e alfabeto (caça às 23 letras da vida extra).
+- Nunca repete palavra na mesma partida; penaliza repetições na sessão.
+- **Verificação de envio**: se ainda for a sua vez depois do ENTER, a palavra foi recusada — o bot tenta outra
+  na mesma rodada. Recusada 2× vai para `rejeitadas.txt` e não é mais usada.
+- **Orçamento de tempo por turno**: cronometra desde que a vez virou sua e corta a encenação quando o tempo aperta.
+- Nova partida automática após um período sem turnos.
 
-## Dependencias
-- Python 3.10+
-- Bibliotecas: `numpy`, `opencv-python`, `pyautogui`, `pynput`, `pyperclip`, `keyboard`, `Pillow`
+**Leitura da sílaba**
+- *Clique + Ctrl+C* (padrão): seleciona a sílaba e copia, confirmando a cópia pelo número de sequência da área de
+  transferência e devolvendo depois tudo o que você tinha copiado (texto, imagens, arquivos), sem poluir o
+  histórico do Win+V.
+- *OCR do Windows*: lê a sílaba da imagem, sem mexer no mouse nem no clipboard (usa o OCR nativo do Windows, sem
+  instalar nada). Se o OCR não reconhecer a sílaba num ciclo, o bot usa clique + Ctrl+C naquele ciclo.
 
-Instale-as com:
-```powershell
-python -m pip install -r requirements.txt
-```
-(ou instale manualmente caso nao utilize arquivo de requisitos.)
+**Humanização**
+- Perfis prontos (Seguro, Equilibrado, Agressivo), perfil de velocidade, erros corrigidos com backspace, pausas,
+  hesitação antes do ENTER, "pensar" após 3 letras, frase engraçada / ensaio digitados e apagados, falha
+  proposital, erro + ENTER + correção, números aleatórios por algumas rodadas.
 
-## Arquivos principais
-- `codigov4.py`: aplicacao principal com a GUI e logica do bot.
-- `test_logica.py`: testes da logica pura (`python test_logica.py`), nao abre janela.
-- `config.json`: configuracoes persistentes (auto-criado/atualizado).
-- `posicoes.json`: posicoes de captura (letras, chatbox, retangulos, resolucao da calibracao).
-- `acento.txt`: dicionario base de palavras.
-- `blacklist.txt`: lista opcional de palavras a ignorar (crie o arquivo se desejar).
-- `rejeitadas.txt`: gerado pelo proprio bot com as palavras que o JKLM recusou 2x.
+**Segurança**
+- Antes de digitar ou copiar, o app confere se o foco está na janela do jogo (e não no próprio Bombinha ou em
+  outro programa). Se não estiver, a jogada é cancelada com um aviso no console.
+- Modo teste: roda o fluxo inteiro sem enviar teclas.
 
-## Como usar
-1. Certifique-se de que a resolucao/escala do Windows corresponde a utilizada quando as coordenadas foram salvas.
-2. Execute `python codigov4.py`.
-3. Na pagina **Setup**:
-   - Aponte para o dicionario (`acento.txt`).
-   - Clique em **Capturar** e depois no ponto correspondente dentro do jogo (letras e campo de digitacao).
-   - Para a barra de turno sao dois cliques: canto superior esquerdo e inferior direito.
-   - Ajuste thresholds, delays e demais opcoes conforme necessario e clique **Aplicar e salvar**.
-4. Na pagina **Principal**, escolha o modo de jogo e clique **Iniciar**.
-5. Use `F8` como kill-switch rapido.
+## Onde ficam os arquivos
 
-## Navegacao da interface
-| Pagina | Para que serve |
+| O quê | Onde |
 | --- | --- |
-| **Principal** | Modo de jogo, botoes Iniciar/Parar e acompanhamento da rodada atual |
-| **Console** | Log colorido de tudo que o bot decide, com copiar/limpar |
-| **Setup** | Dicionario, posicoes, captura da silaba, verificacao de envio e delays |
-| **Humanizacao** | Perfis prontos, perfil de digitacao, chances de erro e frases engracadas |
-| **Estatisticas** | Desempenho, taxa de aceitacao e historico da sessao (exportavel) |
+| Configurações e posições | `%APPDATA%\Bombinha\settings.json` |
+| Palavras recusadas pelo jogo | `%APPDATA%\Bombinha\rejeitadas.txt` (pode editar/apagar) |
+| Blacklist pessoal (opcional) | `%APPDATA%\Bombinha\blacklist.txt` (uma palavra por linha, `#` comenta) |
+| Template capturado da tela | `%APPDATA%\Bombinha\campo-digitacao.png` |
+| Logs técnicos (14 dias) | `%LOCALAPPDATA%\Bombinha\logs\` |
 
-Atalhos: `F8` para tudo, `F7` troca de modo, `F6` nova partida, `Ctrl+S` salva.
+O dicionário PT-BR (~245 mil palavras) e o template padrão ficam embutidos no executável; **Setup** permite usar
+arquivos próprios. Os botões *Abrir pasta de dados* e *Abrir pasta de logs* levam até essas pastas.
 
-## Captura da silaba: clipboard ou OCR
-O metodo padrao (duplo-clique + `Ctrl+C`) funciona sem instalar nada, mas mexe o mouse e usa a
-area de transferencia — o app devolve o conteudo anterior automaticamente.
+## Solução de problemas
 
-Para o metodo OCR (sem mouse e sem clipboard):
-1. `pip install pytesseract` e instale o [Tesseract](https://github.com/UB-Mannheim/tesseract/wiki).
-2. Em **Setup > Captura da silaba**, escolha "OCR da imagem".
-3. Capture a **regiao da silaba** (dois cliques: canto superior esquerdo e inferior direito).
+- **"Campo de digitação não encontrado"** no *Testar detecção* durante a sua vez: capture o template da tela
+  (Setup) ou reduza um pouco o limite do template. Fora da sua vez, "não encontrado" é o esperado.
+- **Envia em turnos alheios**: aumente o limite do template/da barra de turno.
+- **"Digitação bloqueada por segurança"**: alguma janela (inclusive o Bombinha "sempre no topo") está por cima
+  do campo de digitação, ou o foco foi para outro programa.
+- **Captura falhando seguidamente**: confira a posição da área das letras e o zoom do navegador; experimente o
+  clique triplo ou o OCR.
+- Achou que o bot aprendeu errado? Edite ou apague `rejeitadas.txt`.
 
-Se o OCR nao estiver disponivel, o bot avisa no console e volta sozinho para o clipboard.
+## Desenvolvimento
 
-## Escala do Windows (DPI)
-Se a escala nao for 100%, as coordenadas dos cliques e a leitura da tela se desalinham. O app roda
-um diagnostico ao abrir e mostra o resultado em **Setup > Sistema**. O jeito mais simples e usar
-escala 100%. A opcao "Ciencia de DPI" existe, mas **exige recalibrar todas as posicoes** depois de
-ativada.
+Requer o SDK do .NET 10.
 
-## Dicas de configuracao
-- Threshold da barra: aumente se houver falsos negativos; reduza se detectar turnos alheios.
-- Ative "Modo Teste" (Setup > Opcoes) para revisar o fluxo sem enviar nenhuma tecla.
-- Use a pagina **Humanizacao** para ajustar probabilidades de comportamento humanizado.
-- A **verificacao de envio** depende da deteccao de turno estar bem calibrada. Se a taxa de
-  aceitacao aparecer muito baixa sem motivo, revise o retangulo da barra e o threshold — ou
-  desligue a verificacao em **Setup > Verificacao e aprendizado**.
-- Achou que o bot aprendeu errado? Basta apagar (ou editar) o `rejeitadas.txt`.
+```powershell
+.\build.ps1            # build Release, testes unitários e de integração, executável e .zip em artifacts\
+.\build.ps1 -E2E       # inclui os testes ponta a ponta (movem o mouse e digitam por ~30 s)
+dotnet run --project src\Bombinha.App
+```
 
-## Segurança
-- Execute o bot em modo janela focada no jogo para evitar digitar em outros aplicativos.
-- Mantenha o ponteiro longe da barra de turno; a aplicacao já posiciona o mouse temporariamente para evitar interferencias.
+| Pasta | Conteúdo |
+| --- | --- |
+| `src/Bombinha.Core` | Regras do bot, sem dependência de Windows: seleção de palavras, planejamento da digitação, detecção por imagem, motor, configuração |
+| `src/Bombinha.App` | WPF + integração com o Windows (SendInput, captura de tela, clipboard, OCR, atalhos) |
+| `tests/Bombinha.Core.Tests` | Testes unitários (inclui o porte de todos os testes da versão Python) |
+| `tests/Bombinha.App.IntegrationTests` | Testes contra as APIs reais do Windows e um jogo simulado |
+| `assets/` | Dicionário e template padrão (embutidos no executável) |
+| `legacy/python/` | Implementação original, mantida como referência |
 
-## Solucao de problemas
-- "Falhas repetidas ao capturar": recalcule as posicoes ou confira se `acento.txt` esta acessivel.
-- "Envio cancelado" frequente: recalcule o retangulo da barra ou revise o threshold.
-- Se algum modulo nao for encontrado, reinstale as dependencias listadas acima.
+## Licença
 
-## Licenca
-Projeto com fins educacionais. Use com responsabilidade e respeite as regras do jogo JKLM.fun.
+Projeto com fins educacionais. Use com responsabilidade e respeite as regras do JKLM.fun.

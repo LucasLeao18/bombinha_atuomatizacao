@@ -1,0 +1,237 @@
+<UserControl x:Class="Bombinha.App.Views.SetupView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="clr-namespace:Bombinha.App.ViewModels"
+             xmlns:c="clr-namespace:Bombinha.App.Ui.Controls"
+             xmlns:core="clr-namespace:Bombinha.Core.Settings;assembly=Bombinha.Core"
+             xmlns:infra="clr-namespace:Bombinha.App.Infrastructure"
+             mc:Ignorable="d"
+             d:DataContext="{d:DesignInstance Type=vm:MainViewModel}">
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel DataContext="{Binding Setup}" Margin="0,0,8,0">
+
+            <!-- ================================================= dicionário e detecção -->
+            <c:Card Header="Dicionário e detecção" Subtitle="Fonte das palavras e como o bot percebe que é a sua vez">
+                <StackPanel>
+                    <c:SettingRow Label="Dicionário" Hint="Arquivo .txt com uma palavra por linha. Vazio = dicionário PT-BR embutido">
+                        <DockPanel>
+                            <Button DockPanel.Dock="Right" Style="{StaticResource BtnSmall}" Content="Embutido" Margin="8,0,0,0" Command="{Binding UseEmbeddedDictionaryCommand}" />
+                            <Button DockPanel.Dock="Right" Style="{StaticResource BtnSmall}" Content="Abrir…" Margin="8,0,0,0" Command="{Binding BrowseDictionaryCommand}" />
+                            <TextBox Tag="dicionário PT-BR embutido (≈245 mil palavras)"
+                                     Text="{Binding Editing.General.DictionaryPath, Converter={StaticResource OptionalPath}, UpdateSourceTrigger=PropertyChanged}" />
+                        </DockPanel>
+                    </c:SettingRow>
+                    <c:SettingRow Label="Imagem do campo de digitação" Hint="Template que indica a sua vez. Capture do seu jogo se a detecção falhar">
+                        <DockPanel>
+                            <Button DockPanel.Dock="Right" Style="{StaticResource BtnSmall}" Content="Embutido" Margin="8,0,0,0" Command="{Binding UseEmbeddedTemplateCommand}" />
+                            <Button DockPanel.Dock="Right" Style="{StaticResource BtnSmall}" Content="Capturar da tela" Margin="8,0,0,0" Command="{Binding CaptureTemplateCommand}" />
+                            <Button DockPanel.Dock="Right" Style="{StaticResource BtnSmall}" Content="Abrir…" Margin="8,0,0,0" Command="{Binding BrowseTemplateCommand}" />
+                            <TextBox Tag="template embutido"
+                                     Text="{Binding Editing.Detection.TemplatePath, Converter={StaticResource OptionalPath}, UpdateSourceTrigger=PropertyChanged}" />
+                        </DockPanel>
+                    </c:SettingRow>
+                    <c:SettingRow Label="Limite do template" Hint="Maior = mais rígido para reconhecer o campo">
+                        <c:SettingSlider Minimum="0.5" Maximum="0.99" Decimals="2" Value="{Binding Editing.Detection.TemplateThreshold}" />
+                    </c:SettingRow>
+                    <c:SettingRow Label="Faixa de busca" Hint="Distância vertical, acima e abaixo do campo calibrado, onde o template é procurado">
+                        <c:SettingSlider Minimum="40" Maximum="600" Suffix="px" Value="{Binding Editing.Detection.SearchMarginY}" />
+                    </c:SettingRow>
+                    <c:SettingRow Label="Confirmar pela barra de turno" Hint="Compara a barra antes de cada ENTER e depois do envio">
+                        <CheckBox Style="{StaticResource Switch}" Content="Ativar" IsChecked="{Binding Editing.Detection.UseTurnBar}" />
+                    </c:SettingRow>
+                    <c:SettingRow Label="Limite da barra de turno" Hint="Maior = evita enviar no turno dos outros">
+                        <c:SettingSlider Minimum="0.5" Maximum="0.99" Decimals="2" Value="{Binding Editing.Detection.TurnBarThreshold}" />
+                    </c:SettingRow>
+                    <c:SettingRow Label="Como comparar a barra" Hint="Pixel = original; Cor = tolera a barra encolher; Híbrido = os dois">
+                        <Border Style="{StaticResource SegmentHost}">
+                            <StackPanel Orientation="Horizontal">
+                                <RadioButton Style="{StaticResource Segment}" Content="Pixel" IsChecked="{Binding Editing.Detection.TurnBarMethod, Converter={StaticResource EnumEq}, ConverterParameter={x:Static core:TurnBarMethod.Pixel}}" />
+                                <RadioButton Style="{StaticResource Segment}" Content="Cor" IsChecked="{Binding Editing.Detection.TurnBarMethod, Converter={StaticResource EnumEq}, ConverterParameter={x:Static core:TurnBarMethod.Color}}" />
+                                <RadioButton Style="{StaticResource Segment}" Content="Híbrido" IsChecked="{Binding Editing.Detection.TurnBarMethod, Converter={StaticResource EnumEq}, ConverterParameter={x:Static core:TurnBarMethod.Hybrid}}" />
+                            </StackPanel>
+                        </Border>
+                    </c:SettingRow>
+                </StackPanel>
+            </c:Card>
+
+            <!-- ================================================= captura da sílaba -->
+            <c:Card Header="Captura da sílaba" Subtitle="Como o bot lê as letras do desafio a cada turno">
+                <StackPanel>
+                    <c:SettingRow Label="Método" Hint="{Binding OcrStatus}">
+                        <Border Style="{StaticResource SegmentHost}">
+                            <StackPanel Orientation="Horizontal">
+                                <RadioButton Style="{StaticResource Segment}" Content="Clique + Ctrl+C" IsChecked="{Binding Editing.Capture.Method, Converter={StaticResource EnumEq}, ConverterParameter={x:Static core:SyllableCaptureMethod.Clipboard}}" />
+                                <RadioButton Style="{StaticResource Segment}" Content="OCR do Windows" IsChecked="{Binding Editing.Capture.Method, Converter={StaticResource EnumEq}, ConverterParameter={x:Static core:SyllableCaptureMethod.Ocr}}" />
+                            </StackPanel>
+                        </Border>
+                    </c:SettingRow>
+                    <c:SettingRow Label="Preservar área de transferência" Hint="Devolve o que você tinha copiado (texto, imagens, arquivos)">
+                        <CheckBox Style="{StaticResource Switch}" Content="Ativar" IsChecked="{Binding Editing.Capture.PreserveClipboard}" />
+                    </c:SettingRow>
+                    <c:SettingRow Label="Tipo de clique para selecionar" Hint="Triplo pega a linha inteira e erra menos; Auto alterna duplo e triplo">
+                        <Border Style="{StaticResource SegmentHost}">
+                            <StackPanel Orientation="Horizontal">
+                                <RadioButton Style="{StaticResource Segment}" Content="Duplo" IsChecked="{Binding Editing.Capture.ClickSelection, Converter={StaticResource EnumEq}, ConverterParameter={x:Static core:ClickSelection.DoubleClick}}" />
+                                <RadioButton Style="{StaticResource Segment}" Content="Triplo" IsChecked="{Binding Editing.Capture.ClickSelection, Converter={StaticResource EnumEq}, ConverterParameter={x:Static core:ClickSelection.TripleClick}}" />
+                                <RadioButton Style="{StaticResource Segment}" Content="Auto" IsChecked="{Binding Editing.Capture.ClickSelection, Converter={StaticResource EnumEq}, ConverterParameter={x:Static core:ClickSelection.Auto}}" />
+                            </StackPanel>
+                        </Border>
+                    </c:SettingRow>
+                    <c:SettingRow Label="Tentativas de captura" Hint="Repete o clique + Ctrl+C quando nada é copiado">
+                        <c:NumericStepper Minimum="1" Maximum="6" Value="{Binding Editing.Capture.Attempts}" />
+                    </c:SettingRow>
+                    <c:SettingRow Label="Região da sílaba (OCR)" Hint="Retângulo em volta das letras da bomba">
+                        <DockPanel>
+                            <Button DockPanel.Dock="Right" Style="{StaticResource BtnSmall}" Content="◎  Capturar" Command="{Binding CaptureSyllableRegionCommand}" />
+                            <TextBlock Text="{Binding SyllableRegionText}" Style="{StaticResource Value}" />
+                        </DockPanel>
+                    </c:SettingRow>
+                </StackPanel>
+            </c:Card>
+
+            <!-- ================================================= posições -->
+            <c:Card Header="Posições na tela" Subtitle="Capturar → clique no ponto dentro do jogo. Gravado na hora, em pixels reais da tela">
+                <StackPanel>
+                    <c:SettingRow Label="Área das letras" Hint="Onde a sílaba aparece na bomba">
+                        <DockPanel>
+                            <Button DockPanel.Dock="Right" Style="{StaticResource BtnSmall}" Content="◎  Capturar" Command="{Binding CaptureSyllablePointCommand}" />
+                            <TextBlock Text="{Binding SyllablePointText}" Style="{StaticResource Value}" />
+                        </DockPanel>
+                    </c:SettingRow>
+                    <c:SettingRow Label="Campo de digitação" Hint="Dentro do campo onde você digita a palavra">
+                        <DockPanel>
+                            <Button DockPanel.Dock="Right" Style="{StaticResource BtnSmall}" Content="◎  Capturar" Command="{Binding CaptureChatPointCommand}" />
+                            <TextBlock Text="{Binding ChatPointText}" Style="{StaticResource Value}" />
+                        </DockPanel>
+                    </c:SettingRow>
+                    <c:SettingRow Label="Barra de turno" Hint="Retângulo: dois cliques">
+                        <DockPanel>
+                            <Button DockPanel.Dock="Right" Style="{StaticResource BtnSmall}" Content="◎  Capturar" Command="{Binding CaptureTurnBarCommand}" />
+                            <TextBlock Text="{Binding TurnBarText}" Style="{StaticResource Value}" />
+                        </DockPanel>
+                    </c:SettingRow>
+                    <DockPanel Margin="0,12,0,0">
+                        <Button DockPanel.Dock="Left" VerticalAlignment="Top" Content="◍  Testar detecção" Command="{Binding TestDetectionCommand}" />
+                        <TextBlock Text="{Binding DetectionResult}" Style="{StaticResource Dim}" FontSize="12" Margin="14,0,0,0" VerticalAlignment="Center" />
+                    </DockPanel>
+                </StackPanel>
+            </c:Card>
+
+            <!-- ================================================= verificação -->
+            <c:Card Header="Verificação e aprendizado" Subtitle="O JKLM recusa palavra repetida ou fora do dicionário dele; aqui o bot percebe e reage">
+                <StackPanel>
+                    <c:SettingRow Label="Conferir se a palavra foi aceita" Hint="Se continuar sendo a sua vez após o ENTER, foi recusada">
+                        <CheckBox Style="{StaticResource Switch}" Content="Ativar" IsChecked="{Binding Editing.Verification.VerifySubmission}" />
+                    </c:SettingRow>
+                    <c:SettingRow Label="Espera antes de conferir">
+                        <c:SettingSlider Minimum="120" Maximum="1200" Suffix="ms" Value="{Binding Editing.Verification.VerificationDelayMs}" />
+                    </c:SettingRow>
+                    <c:SettingRow Label="Tentativas por rodada" Hint="Quantas palavras tentar antes de desistir do turno">
+                        <c:NumericStepper Minimum="1" Maximum="6" Value="{Binding Editing.Verification.MaxAttemptsPerRound}" />
+                    </c:SettingRow>
+                    <c:SettingRow Label="Aprender palavras recusadas" Hint="Recusada 2x vai para rejeitadas.txt e nunca mais é usada">
+                        <CheckBox Style="{StaticResource Switch}" Content="Ativar" IsChecked="{Binding Editing.Verification.LearnRejected}" />
+                    </c:SettingRow>
+                    <c:SettingRow Label="Nova partida automática" Hint="Zera as palavras usadas após um tempo sem turnos">
+                        <CheckBox Style="{StaticResource Switch}" Content="Ativar" IsChecked="{Binding Editing.Verification.AutoNewMatch}" />
+                    </c:SettingRow>
+                    <c:SettingRow Label="Tempo de inatividade">
+                        <c:SettingSlider Minimum="15" Maximum="180" Suffix="s" Value="{Binding Editing.Verification.InactivityNewMatchSeconds}" />
+                    </c:SettingRow>
+                </StackPanel>
+            </c:Card>
+
+            <!-- ================================================= ritmo -->
+            <c:Card Header="Ritmo e limites" Subtitle="Controla a velocidade geral do ciclo">
+                <StackPanel>
+                    <c:SettingRow Label="Entre ciclos" Hint="Pausa entre uma verificação de vez e a próxima">
+                        <c:SettingSlider Minimum="80" Maximum="1000" Suffix="ms" Value="{Binding Editing.Timing.CycleDelayMs}" />
+                    </c:SettingRow>
+                    <c:SettingRow Label="Após selecionar as letras" Hint="Também é o prazo máximo para o Ctrl+C chegar">
+                        <c:SettingSlider Minimum="80" Maximum="800" Suffix="ms" Value="{Binding Editing.Timing.SettleAfterSelectMs}" />
+                    </c:SettingRow>
+                    <c:SettingRow Label="Antes de digitar a palavra">
+                        <c:SettingSlider Minimum="0" Maximum="1000" Suffix="ms" Value="{Binding Editing.Timing.BeforeTypingMs}" />
+                    </c:SettingRow>
+                    <c:SettingRow Label="Orçamento por turno" Hint="Acima disso o bot corta a encenação e envia direto">
+                        <c:SettingSlider Minimum="0.5" Maximum="15" Decimals="1" Suffix="s" Value="{Binding Editing.Timing.RoundTimeLimitSeconds}" />
+                    </c:SettingRow>
+                </StackPanel>
+            </c:Card>
+
+            <!-- ================================================= seleção -->
+            <c:Card Header="Opções de seleção">
+                <StackPanel>
+                    <WrapPanel Margin="0,0,0,6">
+                        <CheckBox Style="{StaticResource Switch}" Content="Modo teste (não digita nada)" IsChecked="{Binding Editing.General.TestMode}" Margin="0,6,40,6" />
+                        <CheckBox Style="{StaticResource Switch}" Content="Log detalhado (DEBUG)" IsChecked="{Binding Editing.General.VerboseLog}" Margin="0,6,40,6" />
+                        <CheckBox Style="{StaticResource Switch}" Content="Penalizar palavras repetidas" IsChecked="{Binding Editing.Selection.PenalizeRepeats}" Margin="0,6,40,6" />
+                        <CheckBox Style="{StaticResource Switch}" Content="Nunca repetir na mesma partida" IsChecked="{Binding Editing.Selection.BlockUsedInMatch}" Margin="0,6,40,6" />
+                    </WrapPanel>
+                    <c:SettingRow Label="Penalidade por repetição" Hint="Multiplica a pontuação a cada uso anterior na sessão">
+                        <c:SettingSlider Minimum="0.05" Maximum="1" Decimals="2" Value="{Binding Editing.Selection.RepeatPenalty}" />
+                    </c:SettingRow>
+                    <c:SettingRow Label="Recentes valem metade" Hint="Palavras usadas nas últimas N jogadas têm a pontuação reduzida">
+                        <c:NumericStepper Minimum="0" Maximum="50" Value="{Binding Editing.Selection.RepeatCooldown}" />
+                    </c:SettingRow>
+                    <c:SettingRow Label="Sortear entre as N melhores" Hint="1 = sempre a melhor pontuação">
+                        <c:NumericStepper Minimum="1" Maximum="10" Value="{Binding Editing.Selection.TopN}" />
+                    </c:SettingRow>
+                    <c:SettingRow Label="Mostrar as melhores no console">
+                        <CheckBox Style="{StaticResource Switch}" Content="Ativar" IsChecked="{Binding Editing.Selection.ShowTopInConsole}" />
+                    </c:SettingRow>
+                    <c:SettingRow Label="Preferir palavras que começam com a sílaba" Hint="Só afeta a pontuação — não descarta as demais">
+                        <CheckBox Style="{StaticResource Switch}" Content="Ativar" IsChecked="{Binding Editing.Selection.PreferPrefix}" />
+                    </c:SettingRow>
+                    <c:SettingRow Label="Peso do prefixo">
+                        <c:SettingSlider Minimum="1" Maximum="3" Decimals="2" Value="{Binding Editing.Selection.PrefixWeight}" />
+                    </c:SettingRow>
+                    <c:SettingRow Label="Caçar letras novas nos modos normais" Hint="Busca a vida extra quando sobra tempo no turno">
+                        <CheckBox Style="{StaticResource Switch}" Content="Ativar" IsChecked="{Binding Editing.Selection.HuntNewLetters}" />
+                    </c:SettingRow>
+                    <c:SettingRow Label="Peso das letras novas">
+                        <c:SettingSlider Minimum="0" Maximum="2" Decimals="2" Value="{Binding Editing.Selection.NewLettersWeight}" />
+                    </c:SettingRow>
+                    <c:SettingRow Label="Frase quando não há palavra" Hint="Enviada se nenhuma palavra contém a sílaba. Vazio = não envia nada">
+                        <TextBox Text="{Binding Editing.General.GiveUpPhrase, UpdateSourceTrigger=PropertyChanged}" />
+                    </c:SettingRow>
+                </StackPanel>
+            </c:Card>
+
+            <!-- ================================================= sistema -->
+            <c:Card Header="Sistema" Subtitle="Diagnóstico de tela e dados do app">
+                <StackPanel>
+                    <TextBlock Text="{Binding DiagnosticText}" FontSize="12" Margin="0,0,0,10" TextWrapping="Wrap">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Foreground" Value="{StaticResource Success}" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding DiagnosticSeverity}" Value="{x:Static infra:DiagnosticSeverity.Warning}">
+                                        <Setter Property="Foreground" Value="{StaticResource Warn}" />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding DiagnosticSeverity}" Value="{x:Static infra:DiagnosticSeverity.Problem}">
+                                        <Setter Property="Foreground" Value="{StaticResource Danger}" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    <WrapPanel>
+                        <Button Style="{StaticResource BtnSmall}" Content="◍  Rodar diagnóstico" Command="{Binding RunDiagnosticsCommand}" Margin="0,0,8,8" />
+                        <Button Style="{StaticResource BtnSmall}" Content="⇪  Importar da versão antiga…" Command="{Binding ImportLegacyCommand}" Margin="0,0,8,8" />
+                        <Button Style="{StaticResource BtnSmall}" Content="Abrir pasta de dados" Command="{Binding OpenDataFolderCommand}" Margin="0,0,8,8" />
+                        <Button Style="{StaticResource BtnSmall}" Content="Abrir pasta de logs" Command="{Binding OpenLogFolderCommand}" Margin="0,0,8,8" />
+                    </WrapPanel>
+                    <TextBlock Style="{StaticResource Muted}" Text="{Binding DataFolder, StringFormat='Configuração, rejeitadas.txt e blacklist.txt ficam em {0}'}" />
+                </StackPanel>
+            </c:Card>
+
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,18">
+                <Button Style="{StaticResource BtnPrimary}" Content="✔  Aplicar e salvar" Padding="22,10" Command="{Binding ApplyAndSaveCommand}" />
+                <Button Content="Descartar alterações" Padding="18,10" Margin="10,0,0,0" Command="{Binding RevertCommand}" />
+            </StackPanel>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>
